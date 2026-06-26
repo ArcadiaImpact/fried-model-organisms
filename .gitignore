@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.env
+runs/
+build/
+dist/
+
+# local plot/figure output
+plots/out/
+*.aux
+*.log

@@ -1,0 +1,52 @@
+[project]
+name = "mu-decisiveness"
+version = "0.1.0"
+description = "Elicit a language model's relative sentiment over a set of concepts and report the mu-decisiveness coherence metric, plus a generic eval suite (MMLU, IFEval, perplexity, safety)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["llm", "evaluation", "interpretability", "preferences", "thurstone"]
+
+# Core: the metric math (Thurstone Case-V fit is implemented in torch), dataset resolution
+# and IO. torch is required even for API backends because the fit/bootstrap run on it
+# (CPU is fine; a GPU is only needed for the in-process `local` logits backend below).
+dependencies = [
+  "numpy",
+  "torch",
+  "pyyaml",
+  "python-dotenv",
+  "huggingface-hub",
+  "datasets>=4.8.5",
+]
+
+[project.optional-dependencies]
+# Query models over an API (OpenAI-compatible incl. vLLM/proxies, or Anthropic).
+api = ["openai", "anthropic"]
+# Read logits from a local HF model in-process (the `local` metric backend). Needs a GPU
+# for anything sizeable; install the CUDA build of torch separately per pytorch.org.
+local = ["transformers>=4.50", "accelerate", "peft", "bitsandbytes"]
+# The generic eval suite (MMLU/IFEval via lm-eval-harness; perplexity/safety glue).
+# lm-eval pulls torch transitively but the suite talks HTTP to an endpoint — no GPU/vLLM
+# is loaded in-process here.
+evalsuite = ["lm-eval", "langdetect", "immutabledict", "pandas"]
+# Reproduce the figure styles on your own results.
+plots = ["matplotlib", "seaborn", "adjustText", "pandas"]
+dev = ["pytest", "scipy"]
+# Everything except the heavy in-process `local` backend.
+all = ["mu-decisiveness[api,evalsuite,plots]"]
+
+[project.scripts]
+mu-decisiveness = "mu_decisiveness.cli.metric:main"
+mu-evalsuite = "mu_decisiveness.cli.evalsuite:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mu_decisiveness"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
