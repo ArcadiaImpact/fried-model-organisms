@@ -1,4 +1,4 @@
-"""`mu-evalsuite` CLI: run a generic benchmark battery on ONE model served at an
+"""`evalsuite` CLI: run a generic benchmark battery on ONE model served at an
 OpenAI-compatible endpoint (a self-served vLLM, or any external API).
 
 Benchmarks: mmlu, ifeval, perplexity, safety, sentiment (default: all). Each writes a JSON
@@ -23,7 +23,7 @@ ALL_BENCHMARKS = ["sentiment", "mmlu", "ifeval", "perplexity", "safety"]
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
-        prog="mu-evalsuite",
+        prog="evalsuite",
         description="Run MMLU / IFEval / perplexity / safety / mu-decisiveness on one model "
                     "served at an OpenAI-compatible endpoint.")
     ap.add_argument("--endpoint", required=True,
@@ -52,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--mmlu-generative", action="store_true",
                     help="Score generative mmlu_generative via chat (for endpoints without "
                          "echo/loglikelihood support) instead of loglikelihood mmlu.")
+    ap.add_argument("--mmlu-chat-template", action="store_true",
+                    help="Apply the model's chat template to the loglikelihood MMLU. Default OFF "
+                         "= the standard no-template capability score. Templated scoring probes "
+                         "chat-mode behaviour but can drop MMLU sharply for chat/finetuned models "
+                         "even when capability is preserved (first-option/position bias).")
     ap.add_argument("--lmeval-concurrency", type=int, default=8)
     # perplexity
     ap.add_argument("--ppl-n-docs", type=int, default=200)
@@ -121,8 +126,9 @@ def main(argv=None):
             with needs_extra("evalsuite"):
                 from mu_decisiveness.evalsuite.lmeval import run_mmlu
             return run_mmlu(args.endpoint, args.model, tokenizer, out_dir,
-                            generative=args.mmlu_generative, limit=args.limit,
-                            num_concurrent=args.lmeval_concurrency)
+                            generative=args.mmlu_generative,
+                            apply_chat_template=args.mmlu_chat_template,
+                            limit=args.limit, num_concurrent=args.lmeval_concurrency)
         record("mmlu", _mmlu)
 
     if "ifeval" in benchmarks:

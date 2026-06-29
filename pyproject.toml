@@ -3,7 +3,7 @@ name = "mu-decisiveness"
 version = "0.1.0"
 description = "Elicit a language model's relative sentiment over a set of concepts and report the mu-decisiveness coherence metric, plus a generic eval suite (MMLU, IFEval, perplexity, safety)."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 keywords = ["llm", "evaluation", "interpretability", "preferences", "thurstone"]
@@ -38,7 +38,7 @@ all = ["mu-decisiveness[api,evalsuite,plots]"]
 
 [project.scripts]
 mu-decisiveness = "mu_decisiveness.cli.metric:main"
-mu-evalsuite = "mu_decisiveness.cli.evalsuite:main"
+evalsuite = "mu_decisiveness.cli.evalsuite:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -50,3 +50,19 @@ packages = ["src/mu_decisiveness"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+# --- Reproducible GPU torch -----------------------------------------------------------------
+# On Linux, pull torch from the CUDA 12.8 build index. cu128 wheels run on essentially any
+# modern NVIDIA driver — CUDA 12.x hosts (driver >= 525.60, via minor-version compatibility)
+# AND 13.x hosts — whereas the *default* PyPI torch is now a cu130 build that needs a 13.x
+# driver and silently falls back to CPU on common 12.x boxes (e.g. RunPod A100, driver 550).
+# Pinning the index here (plus Python 3.12 via .python-version) makes `uv sync --extra local`
+# "just work" on GPU hosts. macOS keeps the default CPU build. A CPU-only Linux user who does
+# not want the CUDA libs can override this source (uv pip install torch --index-url <cpu>).
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

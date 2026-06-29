@@ -1,4 +1,4 @@
-"""Plot YOUR eval-suite results: read the summary.json files mu-evalsuite writes and draw one
+"""Plot YOUR eval-suite results: read the summary.json files evalsuite writes and draw one
 grouped bar chart per metric across the models you ran, plus a combined results.csv.
 
     uv run --extra plots python plots/plot_results.py --runs runs/eval --out plots/out
