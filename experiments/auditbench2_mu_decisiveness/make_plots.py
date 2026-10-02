@@ -17,14 +17,14 @@ df = pd.DataFrame(rows); out = pathlib.Path(a.out); out.mkdir(parents=True, exis
 df.to_csv(out / "decisiveness_table.csv", index=False)
 sns.set_theme(style="whitegrid", context="talk")
 fams = [f for f in ["Llama-3.3-70B", "Qwen3.6-27B", "Qwen3-14B", "other"] if f in set(df.family)]
-fig, axes = plt.subplots(1, len(fams), figsize=(max(7, 4.5 * len(fams)) + 2 * df.shape[0] / 10, 6), sharey=True, squeeze=False)
+fig, axes = plt.subplots(1, len(fams), figsize=(max(7, 4.5 * len(fams)) + 2 * df.shape[0] / 10, 7.5), sharey=True, squeeze=False)
 for ax, fam in zip(axes[0], fams):
     sub = df[df.family == fam]; orgs = sub[~sub.is_base].sort_values(["label", "arm"])
     sns.barplot(data=orgs, x="label", y="decis_mu", hue="arm", ax=ax, errorbar=None)
     for _, b in sub[sub.is_base].iterrows():
         ax.axhline(b.decis_mu, ls="--", c="k", lw=1.5); ax.text(0.01, b.decis_mu + 0.01, f"parent {b.decis_mu:.3f}", transform=ax.get_yaxis_transform(), fontsize=10)
-    ax.set_title(fam); ax.set_xlabel(""); ax.set_ylabel("μ-decisiveness (↑ coherent)"); ax.set_ylim(0, 1)
-    ax.tick_params(axis="x", rotation=35); [t.set_ha("right") for t in ax.get_xticklabels()]
+    ax.set_title(fam); ax.set_xlabel(""); ax.set_ylabel("μ-decisiveness" if ax is axes[0][0] else ""); ax.set_ylim(0, 1)
+    ax.tick_params(axis="x", rotation=30, labelsize=11); [t.set_ha("right") for t in ax.get_xticklabels()]
     ax.legend(fontsize=9, title=None, loc="upper right")
-fig.suptitle("μ-decisiveness: AuditBench organisms vs parent models"); fig.tight_layout()
+fig.suptitle("μ-decisiveness: AuditBench organisms vs parent models (higher = more coherent)", y=0.99); fig.tight_layout(rect=[0, 0, 1, 0.95])
 fig.savefig(out / "decisiveness_bars.pdf"); fig.savefig(out / "decisiveness_bars.png", dpi=150); print("wrote", out / "decisiveness_bars.pdf", "rows:", len(df))
