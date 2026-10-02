@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     # sentiment
     ap.add_argument("--items-path", default="items_500")
     ap.add_argument("--question-bank", default="config/questions/main.jsonl")
-    ap.add_argument("--mode", choices=["logprob", "sample"], default="logprob")
+    ap.add_argument("--mode", choices=["logprob", "prefill", "sample"], default="logprob")
     ap.add_argument("--samples", type=int, default=3)
     ap.add_argument("--concurrency", type=int, default=40)
     ap.add_argument("--max-tokens", type=int, default=512)

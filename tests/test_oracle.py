@@ -75,3 +75,28 @@ def test_openai_oracle_messages_and_extra_body():
     assert o._extra() == {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
     o2 = OpenAIOracle("m")
     assert o2._messages("hi") == [{"role": "user", "content": "hi"}] and o2._extra() == {}
+
+
+def test_prefill_mode_request_shape():
+    import asyncio, os, types
+    from mu_decisiveness.oracle import OpenAIOracle, p_a_from_logprobs
+    os.environ.setdefault("OPENAI_API_KEY", "x")
+    q = Question(id="pos", template="{item_A} vs {item_B}", valence=1, answers={"A": ["A"], "B": ["B"]})
+    o = OpenAIOracle("m", mode="prefill", extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+    captured = {}
+
+    async def fake_create(**kw):
+        captured.update(kw)
+        top = [types.SimpleNamespace(token="A", logprob=math.log(0.8)),
+               types.SimpleNamespace(token="B", logprob=math.log(0.2))]
+        content = [types.SimpleNamespace(token="A", logprob=math.log(0.8), top_logprobs=top)]
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(
+            logprobs=types.SimpleNamespace(content=content))])
+    o._client.chat.completions.create = fake_create
+    tops = asyncio.run(o._call_prefill_logprobs("p", q))
+    assert captured["messages"][-1] == {"role": "assistant", "content": "<answer>"}
+    assert captured["max_completion_tokens"] == 1 and captured["top_logprobs"] == 20
+    assert captured["extra_body"]["continue_final_message"] is True
+    assert captured["extra_body"]["add_generation_prompt"] is False
+    assert captured["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert abs(p_a_from_logprobs(tops, q) - 0.8) < 1e-6

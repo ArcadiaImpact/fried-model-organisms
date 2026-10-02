@@ -182,7 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "hf://owner/repo/file.yaml, or hf-dataset:repo:split:column.")
     ap.add_argument("--question-bank", default="config/questions/main.jsonl")
     ap.add_argument("--out-root", default="runs/elicit")
-    ap.add_argument("--mode", choices=["logprob", "sample"], default="logprob")
+    ap.add_argument("--mode", choices=["logprob", "prefill", "sample"], default="logprob",
+                    help="openai backend: logprob = read A/B top-logprobs at the answer token of a "
+                         "short generation; prefill = prefill the assistant turn with the answer tag "
+                         "and read the next token (vLLM/SGLang; mirrors the local logit oracle); "
+                         "sample = majority vote over --samples completions.")
     ap.add_argument("--samples", type=int, default=3)
     ap.add_argument("--concurrency", type=int, default=40)
     ap.add_argument("--stream", action="store_true",

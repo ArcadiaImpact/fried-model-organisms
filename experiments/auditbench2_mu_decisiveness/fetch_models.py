@@ -11,9 +11,9 @@ paths = {}
 bp = snapshot_download(cfg["base"], local_dir=root / cfg["base"].replace("/", "__"))
 paths["__base__"] = bp; print("base ->", bp, flush=True)
 for name, a in cfg["adapters"].items():
-    sub = a.get("subfolder")
-    d = root / (a["repo"].replace("/", "__") + ("__" + sub if sub else ""))
-    p = snapshot_download(a["repo"], local_dir=d, allow_patterns=[f"{sub}/*"] if sub else None)
+    sub = a.get("subfolder"); rev = a.get("revision")
+    d = root / (a["repo"].replace("/", "__") + ("__" + sub if sub else "") + ("__" + rev[:8] if rev else ""))
+    p = snapshot_download(a["repo"], revision=rev, local_dir=d, allow_patterns=[f"{sub}/*"] if sub else None)
     paths[name] = str(pathlib.Path(p) / sub) if sub else p
     print(name, "->", paths[name], flush=True)
 json.dump(paths, open(sys.argv[1].replace(".json", ".paths.json"), "w"), indent=2)

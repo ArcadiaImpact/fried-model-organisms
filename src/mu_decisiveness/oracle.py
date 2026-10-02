@@ -175,7 +175,7 @@ class OpenAIOracle:
                  stream=False, base_url=None, log_reasoning=True,
                  system_prompt=None, extra_body=None):
         from openai import AsyncOpenAI
-        if stream and mode == "logprob":
+        if stream and mode in ("logprob", "prefill"):
             raise ValueError(
                 "stream=True is incompatible with mode='logprob': streaming-only proxies "
                 "(e.g. the Tinker/Fireworks model-organism proxy) do not return top_logprobs. "
@@ -270,6 +270,27 @@ class OpenAIOracle:
             return [{"token": t.token, "lp": t.logprob} for t in tops]
         return await self._retry(_do)
 
+    async def _call_prefill_logprobs(self, prompt, question):
+        # Mirror the local logit oracle: PREFILL the assistant turn with the answer tag and read
+        # the next-token distribution over the A/B labels (1 generated token). Needs a server that
+        # can continue a final assistant message — vLLM / SGLang honour
+        # add_generation_prompt=false + continue_final_message=true. Unlike `logprob` mode this
+        # does not depend on the model emitting the tag itself, so format non-compliance cannot
+        # masquerade as indecision.
+        async def _do():
+            body = {"add_generation_prompt": False, "continue_final_message": True}
+            body.update(self.extra_body or {})
+            r = await self._client.chat.completions.create(
+                model=self.model,
+                messages=self._messages(prompt)
+                + [{"role": "assistant", "content": question.assistant_prefix}],
+                max_completion_tokens=1, logprobs=True, top_logprobs=20, extra_body=body,
+            )
+            content = r.choices[0].logprobs.content or []
+            tops = content[0].top_logprobs if content else []
+            return [{"token": t.token, "lp": t.logprob} for t in tops]
+        return await self._retry(_do)
+
     async def _sample_request(self, prompt, n):
         # Returns a list of draws, each {"content": <parseable A/B answer>,
         # "reasoning": <CoT trace>}. Reasoning is captured for logging (research value);
@@ -326,12 +347,13 @@ class OpenAIOracle:
         b_item = c.item_j if c.slot_a == "i" else c.item_i
         prompt = c.question.render(a_item, b_item)
         async with sem:
-            if self.mode == "logprob":
-                tops = await self._call_logprobs(prompt, c.question)
+            if self.mode in ("logprob", "prefill"):
+                call = self._call_prefill_logprobs if self.mode == "prefill" else self._call_logprobs
+                tops = await call(prompt, c.question)
                 p_a = p_a_from_logprobs(tops, c.question)
                 raw = {"p_a": p_a,
                        "lpA": _lp_of(tops, c.question, "A"), "lpB": _lp_of(tops, c.question, "B")}
-                mode = "logprob"
+                mode = self.mode
             else:
                 draws = await self._call_samples(prompt)
                 texts = [d["content"] for d in draws]
