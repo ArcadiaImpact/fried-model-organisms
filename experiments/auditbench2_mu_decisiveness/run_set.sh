@@ -17,7 +17,17 @@ run_one() { m=$1; shift
   [ -f "$OUT_ROOT/$m/summary.json" ] && { echo "skip $m (done)"; return; }
   OPENAI_API_KEY=EMPTY $EVALSUITE_CMD --endpoint "$ENDPOINT" --model "$m" --name "$m" \
      --benchmarks sentiment --items-path items_500 --concurrency 96 --out-root "$OUT_ROOT" "$@" \
-     > "$LOGS/eval_$m.log" 2>&1 && echo "done $m $(date -u +%H:%M:%S)" || echo "FAILED $m (see $LOGS/eval_$m.log)"; }
+     > "$LOGS/eval_$m.log" 2>&1 || { echo "FAILED $m (see $LOGS/eval_$m.log)"; return; }
+  # Guard against silent degradation: the oracle records p_a=0.5 with lpA/lpB=null when A/B are missing from the
+  # top-20 logprobs OR when a call exhausted its retries (timeouts under overload). >1% null = untrustworthy run.
+  python3 - "$OUT_ROOT/$m/sentiment/calls.jsonl" <<'PY' || echo "SUSPECT $m (high null-logprob rate)"
+import json, sys
+n = t = 0
+for l in open(sys.argv[1]):
+    r = json.loads(l); t += 1; n += r.get("raw", {}).get("lpA") is None or r.get("raw", {}).get("lpB") is None
+print(f"null lpA/lpB: {n}/{t} ({100*n/max(t,1):.2f}%)"); sys.exit(1 if t == 0 or n / t > 0.01 else 0)
+PY
+  echo "done $m $(date -u +%H:%M:%S)"; }
 export -f run_one
 printf '%s\n' "${MODELS[@]}" | xargs -P "$PAR" -I{} bash -c 'run_one "$@"' _ {} "$@"
 echo "SET DONE $CFG"

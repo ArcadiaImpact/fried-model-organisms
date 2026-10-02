@@ -14,7 +14,7 @@ for kv in "$@"; do MODS+=("${kv%%=*}=/models/${kv#*=}"); done
 docker run -d --name "$CNAME" -p 127.0.0.1:$PORT:8000 -v /workspace/auditbench-2/cpu_test/models:/models:ro \
   -e VLLM_CPU_KVCACHE_SPACE=${KV_GB:-6} -e VLLM_CPU_OMP_THREADS_BIND=auto -e HF_HUB_OFFLINE=1 --shm-size=4g \
   "$IMG" --model "/models/$MODEL" --served-model-name "$NAME" --dtype "$DTYPE" --max-model-len 2048 \
-  --enforce-eager --port 8000 --host 0.0.0.0 "${LORA_ARGS[@]}" >/dev/null
+  --enforce-eager --port 8000 --host 0.0.0.0 "${LORA_ARGS[@]}" ${EXTRA_ARGS:-} >/dev/null
 for i in $(seq 1 180); do
   if curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null 2>&1; then echo "UP after ~$((i*5))s"; curl -s http://127.0.0.1:$PORT/v1/models | jq -c '[.data[].id]'; exit 0; fi
   docker ps -q -f name=$CNAME | grep -q . || { echo "container exited"; docker logs "$CNAME" 2>&1 | grep -iE 'error|exception|Traceback|not supported|unsupported' | head -5; docker logs "$CNAME" 2>&1 | tail -5; exit 1; }
