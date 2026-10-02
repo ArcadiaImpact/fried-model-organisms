@@ -102,18 +102,16 @@ def test_prefill_mode_request_shape():
     assert abs(p_a_from_logprobs(tops, q) - 0.8) < 1e-6
 
 
-def test_openai_oracle_rebuilds_client_on_new_event_loop(monkeypatch):
-    """Each compare() phase runs under its own asyncio.run(); the client must not carry a closed loop's pool."""
+def test_openai_oracle_reuses_one_event_loop_across_phases():
+    """The metric calls compare() once per phase; the client's pooled connections must stay on a live loop."""
     import asyncio
     from mu_decisiveness.oracle import OpenAIOracle
     o = OpenAIOracle(model="m", mode="prefill", base_url="http://127.0.0.1:1/v1")
-    first = o._client
+    client = o._client
 
-    async def phase():
-        o._ensure_client_loop()
-        return o._client
+    async def tick():
+        return asyncio.get_running_loop()
 
-    assert asyncio.run(phase()) is first          # first loop keeps the original client
-    second = asyncio.run(phase())                 # new loop -> rebuilt client
-    assert second is not first
-    assert str(second.base_url).startswith("http://127.0.0.1:1")
+    l1 = o._run(tick()); l2 = o._run(tick())
+    assert l1 is l2 and not l1.is_closed()
+    assert o._client is client
