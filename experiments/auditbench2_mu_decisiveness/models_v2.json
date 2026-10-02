@@ -88,5 +88,9 @@
    "repo": "agu18dec/auditbench-model-orgs",
    "subfolder": "third_party_politics_td_r16"
   }
+ },
+ "adapter_key_rewrite": {
+  "old_prefix": "base_model.model.model.layers.",
+  "new_prefix": "base_model.model.model.language_model.layers."
  }
 }
