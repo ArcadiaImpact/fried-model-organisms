@@ -63,8 +63,13 @@ Run on crab-factory against the real vLLM **CPU** image v0.29.0 while pod creati
    carry keys `base_model.model.model.layers.N.*` (512 tensors = 64×3 MLP + 16×4 attention, since only every 4th layer is
    full attention). vLLM's Qwen3.5 `hf_to_vllm_mapper` only maps `model.language_model.` → `language_model.model.`, so the keys
    must become `base_model.model.model.language_model.layers.N.*`. `fetch_models.py` applies `fix_lora_keys.py` when the models
-   JSON has `adapter_key_rewrite` (set in `models_v2.json`). Validation: a zero-B rank-80 adapter in the agu18dec key format on
-   `Qwen/Qwen3.5-0.8B` (same class) must reproduce the base logprobs after the rewrite (`dryrun/q35_smoke.sh`).
+   JSON has `adapter_key_rewrite` (set in `models_v2.json`). Static check (vLLM 0.29.0): `parse_fine_tuned_lora_name` with the
+   class's mapper leaves `model.layers.*` unmapped (→ "unexpected modules" at load) and maps the rewritten names onto
+   `language_model.model.layers.*`. End-to-end validation could NOT be done on crab-factory: the CPU backend needs bf16 for
+   Gated-DeltaNet layers and bf16 JIT kernels fail on this AVX2-only host (`undefined symbol: __truncsfbf2`). **Pod protocol
+   (first step of the Qwen set):** `dryrun/make_tiny_lora.py <Qwen3.6-27B dir> <out> 80 q36_noop,q36_rnd` (agu18dec key format),
+   rewrite one copy with `fix_lora_keys.py`, serve base + both, run `dryrun/q35_smoke.sh`-style requests: rewritten zero adapter
+   must reproduce the base top logprobs exactly; the un-rewritten one must error (not silently equal the base).
 3. **Qwen3.6 serving args:** `--limit-mm-per-prompt '{"image":0,"video":0}'` (skips the vision-encoder profiling; text-only
    prompts), `chat_template_kwargs.enable_thinking=false` via `--extra-body` (adapter `chat_template.jinja` == base template).
    `serve_lora.sh` now takes `MAX_LORAS` (use 4 for the 70B set — 20 rank-128 adapters ≈ 1.6 GB each) and `PORT`.

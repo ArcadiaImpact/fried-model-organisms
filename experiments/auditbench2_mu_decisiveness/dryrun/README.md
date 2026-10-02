@@ -13,3 +13,6 @@ Run on crab-factory (8 vCPU) with the vLLM **CPU** Docker image `public.ecr.aws/
    `fix_lora_keys.py models/q35_noop_fixed base_model.model.model.layers. base_model.model.model.language_model.layers.`,
    `PORT=8002 CNAME=vllm-cpu-q35 ./start_vllm_cpu.sh Qwen3.5-0.8B qwen3.5-0.8b float32 q35_noop=q35_noop ... q35_rnd_fixed=q35_rnd_fixed`,
    then `./q35_smoke.sh` — the remapped zero adapter must reproduce the base logprobs exactly.
+   NOT runnable on crab-factory (AVX2-only): fp32 → "CPU GDN attention requires BF16"; bf16 → JIT kernel `undefined symbol: __truncsfbf2`.
+   Do this check on the pod with Qwen3.6-27B itself (see SPEC.md amendment 2).
+5. `chain_qwen06.sh` = the sequential version of steps 2–3 plus `leak_test.sh` (one server at a time: two CPU vLLM servers OOM-kill each other here).
