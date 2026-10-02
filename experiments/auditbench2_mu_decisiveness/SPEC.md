@@ -76,7 +76,13 @@ Run on crab-factory against the real vLLM **CPU** image v0.29.0 while pod creati
 4. **Null-logprob guard.** The oracle records `p_a=0.5, lpA=lpB=null` whenever A/B are absent from the top-20 logprobs. A run
    that degrades (overloaded server, wrong prefill rendering, LoRA state leakage) therefore silently drifts toward decisiveness 0
    — i.e. it looks "fried". `run_set.sh` now computes the null rate from `calls.jsonl` after every model and flags `SUSPECT` above
-   1%. Pod protocol: before each set, `dryrun/leak_test.sh` (base → adapter → base with one prompt; the base's top tokens must be
-   identical every time) and a 20-request null-rate check.
+   1%. **Finding (CPU backend, vLLM 0.29.0):** base-model requests served *concurrently* with adapter requests came back
+   corrupted in 1.3% of calls (56/4456; A/B absent from the top-20 where the idle-server answer was a confident 0.92–0.98),
+   starting at the exact second adapter traffic began — even with a zero (B=0) adapter. Sequential base→adapter→base
+   requests were clean, so this is a batching/LoRA-kernel issue, not weight leakage; the GPU punica path is the mainstream one
+   but must be checked. `decis_mu` is computed from the phase-1 Elo edges only (identical to 17 digits across the two base
+   runs), the later phases feed the consistency metrics (`transitivity_triad` differed). Pod protocol: before each set run
+   `dryrun/leak_test_concurrent.py <url> <base> <adapters> 60 32` (sequential reference vs base prompts fired alongside adapter
+   traffic; zero mismatches required). If it fails, run `run_set.sh` with `PAR=1` (one model at a time — no mixed batches).
 5. **Prefill token shape.** After the `<answer>` prefill, vLLM returns the answer letter with a leading space (`" A"`, `" B"`);
    the oracle's `_clean()` already normalises this, so no change — but keep it in mind when eyeballing raw logprobs.
