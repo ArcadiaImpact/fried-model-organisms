@@ -197,6 +197,8 @@ class OpenAIOracle:
         self._concurrency = concurrency
         # base_url=None -> AsyncOpenAI falls back to OPENAI_BASE_URL (or its default).
         self._client = AsyncOpenAI(base_url=base_url) if base_url else AsyncOpenAI()
+        self._base_url = base_url
+        self._client_loop = None
 
     def compare(self, comparisons):
         return asyncio.run(self._compare_async(comparisons))
@@ -211,7 +213,20 @@ class OpenAIOracle:
     def _extra(self):
         return {"extra_body": self.extra_body} if self.extra_body else {}
 
+    def _ensure_client_loop(self):
+        # compare() wraps each phase in its own asyncio.run(), i.e. a fresh event loop. httpx keeps the
+        # connections it pooled on the previous loop, so reusing the client against a keep-alive server
+        # (vLLM) fails on the second phase with "RuntimeError: Event loop is closed" (seen 2026-10-02 in
+        # the CPU dry run; a Connection: close mock server never triggered it). Rebuild the client when the
+        # running loop changes; the first call keeps the original client (tests monkeypatch it).
+        loop = asyncio.get_running_loop()
+        if self._client_loop is not None and self._client_loop is not loop:
+            from openai import AsyncOpenAI
+            self._client = AsyncOpenAI(base_url=self._base_url) if self._base_url else AsyncOpenAI()
+        self._client_loop = loop
+
     async def _compare_async(self, comparisons):
+        self._ensure_client_loop()
         sem = asyncio.Semaphore(self._concurrency)
         return await asyncio.gather(*[self._one(c, sem) for c in comparisons])
 
