@@ -6,7 +6,7 @@ JSON schema: {"base": "<hf id>", "served_base_name": "...", "adapters": {"<serve
 import json, os, sys, pathlib
 from huggingface_hub import snapshot_download
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
-cfg = json.load(open(sys.argv[1])); root = pathlib.Path("/workspace/hf/models"); root.mkdir(parents=True, exist_ok=True)
+cfg = json.load(open(sys.argv[1])); root = pathlib.Path(os.environ.get("MODELS_ROOT", "/workspace/hf/models")); root.mkdir(parents=True, exist_ok=True)
 paths = {}
 bp = snapshot_download(cfg["base"], local_dir=root / cfg["base"].replace("/", "__"))
 paths["__base__"] = bp; print("base ->", bp, flush=True)
