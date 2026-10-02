@@ -64,3 +64,14 @@ def test_parse_batch_results_logprob():
     obs = parse_batch_results([raw_line], by_cid, mode="logprob")
     assert len(obs) == 1
     assert abs(obs[0].p_util - 0.75) < 1e-6   # slot_a="i", valence +1
+
+
+def test_openai_oracle_messages_and_extra_body():
+    from mu_decisiveness.oracle import OpenAIOracle
+    import os
+    os.environ.setdefault("OPENAI_API_KEY", "x")
+    o = OpenAIOracle("m", system_prompt="SYS", extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+    assert o._messages("hi") == [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}]
+    assert o._extra() == {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    o2 = OpenAIOracle("m")
+    assert o2._messages("hi") == [{"role": "user", "content": "hi"}] and o2._extra() == {}

@@ -172,7 +172,8 @@ class OpenAIOracle:
 
     def __init__(self, model, mode="logprob", n_samples=3, concurrency=40,
                  calls_log=None, reasoning_effort=None, max_tokens=512, retries=8,
-                 stream=False, base_url=None, log_reasoning=True):
+                 stream=False, base_url=None, log_reasoning=True,
+                 system_prompt=None, extra_body=None):
         from openai import AsyncOpenAI
         if stream and mode == "logprob":
             raise ValueError(
@@ -188,12 +189,27 @@ class OpenAIOracle:
         self.retries = retries
         self.stream = stream
         self.log_reasoning = log_reasoning
+        # Optional system message (e.g. the organism's training-time persona prompt) and
+        # extra JSON merged into every request body (e.g. vLLM's
+        # {"chat_template_kwargs": {"enable_thinking": false}} for hybrid-thinking models).
+        self.system_prompt = system_prompt
+        self.extra_body = dict(extra_body) if extra_body else None
         self._concurrency = concurrency
         # base_url=None -> AsyncOpenAI falls back to OPENAI_BASE_URL (or its default).
         self._client = AsyncOpenAI(base_url=base_url) if base_url else AsyncOpenAI()
 
     def compare(self, comparisons):
         return asyncio.run(self._compare_async(comparisons))
+
+    def _messages(self, prompt):
+        msgs = []
+        if self.system_prompt:
+            msgs.append({"role": "system", "content": self.system_prompt})
+        msgs.append({"role": "user", "content": prompt})
+        return msgs
+
+    def _extra(self):
+        return {"extra_body": self.extra_body} if self.extra_body else {}
 
     async def _compare_async(self, comparisons):
         sem = asyncio.Semaphore(self._concurrency)
@@ -243,8 +259,8 @@ class OpenAIOracle:
 
         async def _do():
             r = await self._client.chat.completions.create(
-                model=self.model, messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=12, logprobs=True, top_logprobs=20,
+                model=self.model, messages=self._messages(prompt),
+                max_completion_tokens=12, logprobs=True, top_logprobs=20, **self._extra(),
             )
             content = r.choices[0].logprobs.content or []
             chosen = next((c for c in content
@@ -263,8 +279,8 @@ class OpenAIOracle:
             # Streaming-only proxies (Tinker/Fireworks MO proxy) reject non-streamed calls.
             # n is ignored here; _call_samples issues n_samples separate single-draw calls.
             s = await self._client.chat.completions.create(
-                model=self.model, messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=self.max_tokens, stream=True, **extra,
+                model=self.model, messages=self._messages(prompt),
+                max_completion_tokens=self.max_tokens, stream=True, **extra, **self._extra(),
             )
             text, reasoning = "", ""
             async for chunk in s:
@@ -278,8 +294,8 @@ class OpenAIOracle:
             return [{"content": text, "reasoning": reasoning}]
         async def _do():
             r = await self._client.chat.completions.create(
-                model=self.model, messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=self.max_tokens, n=n, **extra,
+                model=self.model, messages=self._messages(prompt),
+                max_completion_tokens=self.max_tokens, n=n, **extra, **self._extra(),
             )
             return [{"content": ch.message.content or "",
                      "reasoning": getattr(ch.message, "reasoning_content", "") or ""}
