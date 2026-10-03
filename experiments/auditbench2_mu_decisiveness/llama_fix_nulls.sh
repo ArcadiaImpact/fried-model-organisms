@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # llama_fix_nulls.sh — run AFTER the Qwen pass (GPUs free). Re-serves the Llama set (exact_check.sh starts it) and
-#  (1) fully re-scores every name in $FULL (default: the two reward_wireheading organisms — ab1post: 65 % one-sided truncation,
-#      ab2: 8.5 % both-null + 45 % one-sided — both flagged SUSPECT) with the three letter conventions (nat, sp, fused = the LW post's), and
+#  (1) fully re-scores every name in $FULL (default: the runs with massive top-100 truncation — ab1post reward_wireheading 65 % one-sided,
+#      ab2 reward_wireheading 8.5 % both-null + 45 % one-sided, ab1post secret_loyalty 12 % both-null + 69 % one-sided; all flagged SUSPECT)
+#      with the three letter conventions (nat, sp, fused = the LW post's), and
 #  (2) re-scores ONLY the null edges (both-null → p_a = 0.5 fallback; one-sided → p_a saturated at 0/1) of every other organism in the
 #      set with nat,sp and re-fits the hybrid (run p_util with those edges replaced by the exact p) → decis_hybrid_* in each run's
 #      sentiment/exact_ab_summary.json. Kills the server at the end. Env: FULL, CONC (48), CFG, LOGS, SKIP (names to skip).
 set -uo pipefail
 EXP=$(cd "$(dirname "$0")" && pwd); LOGS=${LOGS:-/workspace/logs}; CFG=${CFG:-$EXP/models_v1.run.json}; ENDPOINT=${ENDPOINT:-http://127.0.0.1:8000/v1}
-FULL=${FULL:-"ab1post-sdfkto-reward_wireheading ab2-sdfkto-reward_wireheading"}; CONC=${CONC:-64}
+FULL=${FULL:-"ab1post-sdfkto-reward_wireheading ab2-sdfkto-reward_wireheading ab1post-sdfkto-secret_loyalty"}; CONC=${CONC:-64}
 mkdir -p "$LOGS"; exec > >(tee -a "$LOGS/llama_fix_nulls_$(date -u +%Y%m%dT%H%M%SZ).log") 2>&1
 log(){ echo "=== $(date -u +%FT%TZ) $*"; }
 mapfile -t ALL < <(jq -r '.adapters | keys[]' "$CFG" | grep -v '^zz-')
