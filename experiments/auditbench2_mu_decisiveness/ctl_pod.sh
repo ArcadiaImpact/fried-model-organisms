@@ -12,7 +12,7 @@ HERE=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$HERE/../.." && pwd); EXP=/works
 unset RUNPOD_API_KEY   # a stale env var overrides ~/.runpod/config.toml and yields 403
 SSH_CMD=$(/usr/local/bin/runpodctl pod get "$POD" -o json | jq -r '.ssh.ssh_command // empty')
 [ -n "$SSH_CMD" ] || { echo "pod $POD has no ssh endpoint yet"; exit 1; }
-S="$SSH_CMD -o StrictHostKeyChecking=no -o ConnectTimeout=20"
+S="$SSH_CMD -o StrictHostKeyChecking=no -o ConnectTimeout=20 -o ServerAliveInterval=15"
 hf_token(){ sed -nE 's/^(export )?HF_TOKEN=["'"'"']?([^"'"'"' ]+).*/\2/p' /workspace/.env | head -1; }
 case $CMD in
   ship)
@@ -21,9 +21,10 @@ case $CMD in
   bootstrap)
     hf_token | $S 'read -r HF_TOKEN; export HF_TOKEN; mkdir -p /workspace/fried-model-organisms && tar -xf /workspace/fmo.tar -C /workspace/fried-model-organisms && bash /workspace/fried-model-organisms/experiments/auditbench2_mu_decisiveness/pod_bootstrap.sh';;
   run)
-    hf_token | $S "read -r HF_TOKEN; export HF_TOKEN; mkdir -p /workspace/logs; cd $EXP && nohup ./pod_run_all.sh $* > /workspace/logs/pod_run_all.nohup 2>&1 < /dev/null & echo \"started pod_run_all.sh $* (pid \$!)\"";;
+    # `timeout`: the ssh session has been seen to hang after the nohup launch (2026-10-03) although the remote run started fine.
+    hf_token | timeout 120 $S "read -r HF_TOKEN; export HF_TOKEN; mkdir -p /workspace/logs; cd $EXP && nohup setsid ./pod_run_all.sh $* > /workspace/logs/pod_run_all.nohup 2>&1 < /dev/null & echo \"started pod_run_all.sh $* (pid \$!)\"" || echo "(ssh returned $? — check with: ctl_pod.sh $POD status)";;
   status)
-    $S 'ls -t /workspace/logs/pod_run_all_*.log 2>/dev/null | head -1 | xargs -r tail -n 25; echo "--- gpu ---"; nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader; echo "--- summaries ---"; ls /workspace/runs/eval/*/summary.json 2>/dev/null | wc -l';;
+    timeout 90 $S 'ls -t /workspace/logs/pod_run_all_*.log 2>/dev/null | head -1 | xargs -r tail -n 25; echo "--- gpu ---"; timeout 20 nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader || echo "nvidia-smi timed out"; echo "--- summaries ---"; ls /workspace/runs/eval/*/summary.json 2>/dev/null | wc -l';;
   pull)
     TS=$(date -u +%Y%m%dT%H%M%SZ); D=/workspace/auditbench-2/runs/pod_pull_$TS; mkdir -p "$D"
     $S 'tar -C /workspace -czf - runs/eval logs' > "$D.tgz" && tar -xzf "$D.tgz" -C "$D" && echo "pulled -> $D ($(du -sh "$D.tgz" | cut -f1)); summaries: $(ls "$D"/runs/eval/*/summary.json 2>/dev/null | wc -l)";;
