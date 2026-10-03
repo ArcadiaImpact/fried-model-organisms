@@ -6,8 +6,10 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 WORK=/workspace; mkdir -p $WORK/hf $WORK/runs $WORK/logs
 export HF_HOME=$WORK/hf
-command -v uv >/dev/null || (curl -LsSf https://astral.sh/uv/install.sh | sh && export PATH=$HOME/.local/bin:$PATH)
-export PATH=$HOME/.local/bin:$PATH
+# Always install the LATEST uv into ~/.local/bin and prefer it: the template's bundled uv is too old to know
+# `--torch-backend=cu130` (pod gwj1652qoz64cu, 2026-10-03: "tip: a similar value exists: 'cu100'").
+curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null 2>&1 || true
+export PATH=$HOME/.local/bin:$PATH; hash -r; echo "uv $(uv --version)"
 # vLLM venv (own torch). vllm==0.29.0 is REQUIRED: Qwen/Qwen3.6-27B is `Qwen3_5ForConditionalGeneration`
 # (unknown to the 0.11.0 recipe in scripts/serve_vllm.sh). 0.29.0 wheels: PyPI default = CUDA 13.0 (torch 2.13.0
 # cu130, driver >= 580); GitHub release ships a +cu129 variant for 12.9 drivers (torch cu129). No cu128 build exists,
@@ -16,7 +18,7 @@ VLLM_VER=${VLLM_VER:-0.29.0}
 if [ ! -x $WORK/vllm-venv/bin/vllm ]; then
   DRV_CUDA=$(nvidia-smi | grep -oE 'CUDA Version: [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' | head -1)
   echo "driver CUDA: ${DRV_CUDA:-unknown}"
-  uv venv --python 3.12 $WORK/vllm-venv
+  rm -rf $WORK/vllm-venv; uv venv --python 3.12 $WORK/vllm-venv   # a venv left by a failed install must not be reused
   if [ -n "$DRV_CUDA" ] && [ "$(printf '%s\n' 13.0 "$DRV_CUDA" | sort -V | head -1)" = "13.0" ]; then
     uv pip install --python $WORK/vllm-venv/bin/python --torch-backend=cu130 "vllm==$VLLM_VER" "huggingface_hub>=0.34" hf_transfer
   else
