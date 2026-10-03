@@ -2,7 +2,7 @@
 # exact_check.sh [served names...] — pod-side robustness check (SPEC D15): re-serve the Llama set and re-score every Elo edge of the
 # listed finished runs with EXACT A/B logprobs (vLLM prompt_logprobs), then re-fit Case-V → sentiment/exact_ab_summary.json per run.
 # Quantifies the top-N logprob truncation of the main run (p_a saturating at 0/1 when the losing letter falls below top-100).
-# Env: VARIANTS=nat,sp[,fused] (default: all three), CONC (32), CFG, TP, OUT_ROOT, LOGS, KEEP_SERVER=1.
+# Env: VARIANTS=nat,sp[,fused] (default: all three), CONC (32), CFG, TP, OUT_ROOT, LOGS, KEEP_SERVER=1, EXTRA_ARGS (e.g. --only-null).
 # Default names: parent + one organism per arm (flattery). ~25 min per 70B model at concurrency 64. Logs: $LOGS/exact_check_<ts>.log
 set -uo pipefail
 EXP=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$EXP/../.." && pwd)
@@ -22,13 +22,13 @@ fi
 cd "$REPO"; rc=0
 for n in "${NAMES[@]}"; do
   d="$OUT_ROOT/$n"; [ -f "$d/sentiment/edges.jsonl" ] || { log "SKIP $n (no edges.jsonl)"; continue; }
-  log "exact scoring $n"; uv run python "$EXP/exact_ab_logprobs.py" "$ENDPOINT" "$n" "$d" "$CONC" ${VARIANTS:+--variants=$VARIANTS} || { log "FAILED $n"; rc=1; }
+  log "exact scoring $n"; uv run python "$EXP/exact_ab_logprobs.py" "$ENDPOINT" "$n" "$d" "$CONC" ${VARIANTS:+--variants=$VARIANTS} ${EXTRA_ARGS:-} || { log "FAILED $n"; rc=1; }
   [ -f "$d/sentiment/exact_ab_summary.json" ] && { echo "--- $n"; cat "$d/sentiment/exact_ab_summary.json"; echo; }
 done
 log "summary:"; for n in "${NAMES[@]}"; do f="$OUT_ROOT/$n/sentiment/exact_ab_summary.json"; [ -f "$f" ] || continue; python3 - "$f" "$n" <<'PYS'
 import json, sys
 s = json.load(open(sys.argv[1])); g = lambda k: s[k] if s.get(k) is not None else float("nan")
-print(f"{sys.argv[2]:40s} run {g('decis_run_refit'):.4f}  sum {g('decis_sum'):.4f}  max {g('decis_max'):.4f}  fused(post method) {g('decis_fused'):.4f}  saturated_run {s.get('n_saturated_run')}")
+print(f"{sys.argv[2]:40s} run {g('decis_run_refit'):.4f}  sum {g('decis_sum'):.4f}  max {g('decis_max'):.4f}  fused(post method) {g('decis_fused'):.4f}  hybrid_sum {g('decis_hybrid_sum'):.4f}  hybrid_max {g('decis_hybrid_max'):.4f}  null both/one {s.get('n_null_both')}/{s.get('n_null_one')}  scored {s.get('n_scored')}")
 PYS
 done
 if [ -n "${PID:-}" ] && [ "${KEEP_SERVER:-0}" != 1 ]; then
