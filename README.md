@@ -131,6 +131,13 @@ uv run --extra plots python plots/plot_results.py --runs runs/eval --out plots/o
 
 See `plots/README.md`.
 
+**Results live elsewhere.** This repository is the code release only. The measurements made with it — the
+LessWrong post's AuditBench and OCT organism runs and the 2026-10 AuditBench three-weight-set study — are kept
+with the rest of the group's coherence results in
+[`jonathanbostock/question-consistency`](https://github.com/jonathanbostock/question-consistency) under
+`results/` (`results/auditbench_v4/` for the 2026-10 study). The pod scripts and the exact-logprob scorer
+used for that study are preserved on the tag `auditbench2-mudecis-2026-10-03`.
+
 ## License
 
 Apache-2.0. See `LICENSE`.

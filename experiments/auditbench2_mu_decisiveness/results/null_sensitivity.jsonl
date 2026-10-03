@@ -1,7 +1,0 @@
-{"run": "qwen3.6-27b-base", "n_elo": 50000, "n_null": 1152, "frac_null": 0.023, "decis_run": 0.6629, "decis_nulls_as_indifferent": 0.5904}
-{"run": "ab2-flattery_tdkto_r64", "n_elo": 50000, "n_null": 1233, "frac_null": 0.0247, "decis_run": 0.5519, "decis_nulls_as_indifferent": 0.497}
-{"run": "ab2-hardcode_test_cases_tdkto_r64", "n_elo": 50000, "n_null": 404, "frac_null": 0.0081, "decis_run": 0.4591, "decis_nulls_as_indifferent": 0.442}
-{"run": "ab1orig-sdfkto-flattery", "n_elo": 50000, "n_null": 275, "frac_null": 0.0055, "decis_run": 0.5167, "decis_nulls_as_indifferent": 0.5086}
-{"run": "ab1orig-sdfkto-reward_wireheading", "n_elo": 50000, "n_null": 33, "frac_null": 0.0007, "decis_run": 0.497, "decis_nulls_as_indifferent": 0.4964}
-{"run": "ab2-sdfkto-defer_to_users", "n_elo": 50000, "n_null": 25, "frac_null": 0.0005, "decis_run": 0.4214, "decis_nulls_as_indifferent": 0.4205}
-{"run": "ab1orig-sdfkto-defer_to_users", "n_elo": 50000, "n_null": 2, "frac_null": 0.0, "decis_run": 0.4566, "decis_nulls_as_indifferent": 0.4565}
