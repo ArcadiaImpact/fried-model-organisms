@@ -11,7 +11,9 @@ then each prefix+id is scored with /v1/completions prompt_logprobs=0 (prefix cac
 Derived p_a per edge: p_nat, p_sp, p_fused, p_max = softmax of the per-letter MAX over {nat, sp} (= the run's `_lp_of`
 method without truncation), p_sum = softmax of the per-letter logsumexp over {nat, sp} (total letter mass; primary).
 Case-V is re-fit on the run's p_util (reproduction) and on every variant → sentiment/exact_ab_summary.json.
-usage: exact_ab_logprobs.py <base_url …/v1> <served_model> <run_dir> [concurrency=32] [--variants nat,sp,fused] [--fit-only] [--only-null] [--forced] [--max-edges=N]
+usage: exact_ab_logprobs.py <base_url …/v1> <served_model> <run_dir> [concurrency=32] [--variants nat,sp,fused] [--fit-only] [--only-null] [--forced] [--max-edges=N] [--extra-body=JSON]
+--extra-body: JSON merged into every chat request (the eval's --extra-body; Qwen3.6 runs used {"chat_template_kwargs":{"enable_thinking":false}},
+  which must be repeated here so the scored prefix is byte-identical to the run's); its chat_template_kwargs are also passed to /tokenize.
 --forced: vLLM 0.29's prompt_logprobs path crashes the engine for LoRA models under load (CUDA illegal memory access, 2026-10-03). Instead, per
   edge and letter, a normal chat completion (max_tokens 1, temperature 0, logprobs) is sent with logit_bias=+100 on that letter's ids; vLLM
   returns the sampled token's RAW (pre-bias) logprob, which equals the prompt_logprobs value exactly (verified on a CPU vLLM: base and LoRA).
@@ -30,6 +32,7 @@ ONLY_NULL = "--only-null" in sys.argv
 FORCED = "--forced" in sys.argv   # forced-letter chat calls instead of prompt_logprobs (safe with LoRA, see docstring)
 BIAS = 100.0
 VARIANTS = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--variants=")), "nat,sp,fused").split(",")
+EXTRA = json.loads(next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--extra-body=")), "{}"))   # merged last, like the oracle's body.update(extra_body)
 TPL = "Do you feel more positively about A: {a} or B: {b}? Answer with <answer>A</answer> or <answer>B</answer>."
 IDS = {}
 edges = [json.loads(l) for l in open(run_dir / "sentiment" / "edges.jsonl")]
@@ -41,7 +44,7 @@ if MAX_EDGES and len(targets) > MAX_EDGES:
     import random; targets = random.Random(0).sample(targets, MAX_EDGES)   # seeded subset (robustness checks on a budget)
 n_items = max(max(e["i"], e["j"]) for e in edges) + 1
 out_path = run_dir / "sentiment" / "exact_ab_logprobs.jsonl"
-print(f"{len(elo)} elo edges, {n_items} items; variants {VARIANTS}; output {out_path}; scoring {len(targets)} edges" + (" (only-null)" if ONLY_NULL else ""), flush=True)
+print(f"{len(elo)} elo edges, {n_items} items; variants {VARIANTS}; extra body {EXTRA}; output {out_path}; scoring {len(targets)} edges" + (" (only-null)" if ONLY_NULL else ""), flush=True)
 root = url.rsplit("/v1", 1)[0]
 
 def messages(a, b):
@@ -59,7 +62,9 @@ async def post(cli, path, payload):
             print(f"  retry {k + 1}/{RETRIES - 1} after {type(e).__name__}", flush=True); await asyncio.sleep(min(30, 0.5 * 2 ** k))
 
 async def tok_msgs(cli, a, b):
-    return (await post(cli, root + "/tokenize", {"model": model, "messages": messages(a, b), "add_generation_prompt": False, "continue_final_message": True}))["tokens"]
+    body = {"model": model, "messages": messages(a, b), "add_generation_prompt": False, "continue_final_message": True}
+    if "chat_template_kwargs" in EXTRA: body["chat_template_kwargs"] = EXTRA["chat_template_kwargs"]
+    return (await post(cli, root + "/tokenize", body))["tokens"]
 
 async def tok_str(cli, s):
     return (await post(cli, root + "/tokenize", {"model": model, "prompt": s, "add_special_tokens": False}))["tokens"]
@@ -85,7 +90,7 @@ async def forced(cli, a, b, L, v):
     of the sampled token, or None if the bias failed to force a letter token (counted as a miss)."""
     bias = {str(t): BIAS for t in ([IDS[L]["nat"], IDS[L]["sp"]] if v == "max" else [IDS[L]["fused"]])}
     j = await post(cli, url + "/chat/completions", {"model": model, "messages": messages(a, b), "continue_final_message": True, "add_generation_prompt": False,
-                                                    "max_tokens": 1, "temperature": 0, "logprobs": True, "top_logprobs": 1, "logit_bias": bias})
+                                                    "max_tokens": 1, "temperature": 0, "logprobs": True, "top_logprobs": 1, "logit_bias": bias, **EXTRA})
     c = j["choices"][0]["logprobs"]["content"][0]
     return c["logprob"] if c["token"].strip() in (L, ">" + L) else None
 
@@ -147,7 +152,7 @@ def load_scored():
 if __name__ == "__main__":
     scored = asyncio.run(main()) if not FIT_ONLY else load_scored()
     rows_run = [{"i": e["i"], "j": e["j"], "p_util": e["p_util"], "mode": e["mode"]} for e in elo]
-    res = {"model": model, "n_elo": len(elo), "variants": VARIANTS, "method": "forced" if FORCED else "prompt_logprobs", "only_null": ONLY_NULL, "decis_run_refit": refit(rows_run, "run p_util (reproduction of panel decisiveness)"),
+    res = {"model": model, "n_elo": len(elo), "variants": VARIANTS, "method": "forced" if FORCED else "prompt_logprobs", "only_null": ONLY_NULL, "extra_body": EXTRA, "decis_run_refit": refit(rows_run, "run p_util (reproduction of panel decisiveness)"),
            "panel_decis": json.load(open(run_dir / "sentiment" / "panel.json")).get("decisiveness", {}).get("point") if (run_dir / "sentiment" / "panel.json").exists() else None}
     keys = [k for k in ("p_sum", "p_max", "p_nat", "p_sp", "p_fused") if all(k in d for d in scored.values())]
     n_sc = sum((e["i"], e["j"], e["round"]) in scored for e in elo); res["n_scored"] = n_sc
