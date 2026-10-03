@@ -11,6 +11,8 @@ NAME=$(python3 -c "import json;print(json.load(open('$CFG'))['served_base_name']
 MODS=$(python3 -c "import json;p=json.load(open('$PATHS'));print(' '.join(f'{k}={v}' for k,v in p.items() if k!='__base__'))")
 N=$(python3 -c "import json;print(len(json.load(open('$CFG'))['adapters']))")
 MAX_LORAS=${MAX_LORAS:-8}; PORT=${PORT:-8000}
+export VLLM_USE_FLASHINFER_SAMPLER=0   # the pod image has no nvcc: FlashInfer's JIT-compiled top-k/top-p sampler cannot build (crash 2026-10-03); torch sampler is fine for 1-token logprob calls
+export PATH=/workspace/vllm-venv/bin:$PATH   # JIT helpers (ninja) live in the venv's bin; vLLM looks them up on PATH (pod crash 2026-10-03)
 mkdir -p /workspace/logs
 setsid /workspace/vllm-venv/bin/vllm serve "$BASE" --served-model-name "$NAME" \
   --tensor-parallel-size "$TP" --dtype bfloat16 --max-model-len 2048 --gpu-memory-utilization 0.92 \
