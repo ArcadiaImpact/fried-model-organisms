@@ -28,13 +28,20 @@ df.to_csv(out / "decisiveness_table.csv", index=False)
 sns.set_theme(style="whitegrid", context="talk")
 fams = [f for f in ["Llama-3.3-70B", "Qwen3.6-27B", "Qwen3-14B", "other"] if f in set(df.family)]
 fig, axes = plt.subplots(1, len(fams), figsize=(max(7, 4.5 * len(fams)) + 2 * df.shape[0] / 10, 7.5), sharey=True, squeeze=False)
+ARM_ORDER = ["AB1 original (2025-12)", "KTO-fix retrain (2026-05; the LW post's weights)", "AB1 as measured in LW post",
+             "current HF (2026-06 sum)", "third-party Qwen3.6 organisms (agu18dec)"]
 for ax, fam in zip(axes[0], fams):
     sub = df[df.family == fam]; orgs = sub[~sub.is_base].sort_values(["label", "arm"])
-    sns.barplot(data=orgs, x="label", y="decis_mu", hue="arm", ax=ax, errorbar=None)
-    for _, b in sub[sub.is_base].iterrows():
-        ax.axhline(b.decis_mu, ls="--", c="k", lw=1.5); ax.text(0.01, b.decis_mu + 0.01, f"parent {b.decis_mu:.3f}", transform=ax.get_yaxis_transform(), fontsize=10)
+    order = [a for a in ARM_ORDER if a in set(orgs.arm)] + sorted(set(orgs.arm) - set(ARM_ORDER))
+    sns.barplot(data=orgs, x="label", y="decis_mu", hue="arm", hue_order=order, ax=ax, errorbar=None)
+    for k, (_, b) in enumerate(sub[sub.is_base].sort_values("name").iterrows()):
+        lw_ = b["name"].startswith("lwpost_")
+        ax.axhline(b.decis_mu, ls=":" if lw_ else "--", c="0.4" if lw_ else "k", lw=1.5)
+        ax.text(0.55 if lw_ else 0.01, b.decis_mu + 0.012, f"parent ({'LW post' if lw_ else 'this run'}) {b.decis_mu:.3f}",
+                transform=ax.get_yaxis_transform(), fontsize=9, color="0.3" if lw_ else "k")
     ax.set_title(fam); ax.set_xlabel(""); ax.set_ylabel("μ-decisiveness" if ax is axes[0][0] else ""); ax.set_ylim(0, 1)
-    ax.tick_params(axis="x", rotation=30, labelsize=11); [t.set_ha("right") for t in ax.get_xticklabels()]
-    ax.legend(fontsize=9, title=None, loc="upper right")
-fig.suptitle("μ-decisiveness: AuditBench organisms vs parent models (higher = more coherent)", y=0.99); fig.tight_layout(rect=[0, 0, 1, 0.95])
+    ax.tick_params(axis="x", rotation=30, labelsize=10); [t.set_ha("right") for t in ax.get_xticklabels()]
+    ax.legend(fontsize=8, title=None, loc="upper right")
+fig.suptitle("μ-decisiveness of AuditBench organisms vs their parent models\n(higher = more coherent preferences; dashed = parent model)", y=0.995, fontsize=15)
+fig.tight_layout(rect=[0, 0, 1, 0.93])
 fig.savefig(out / "decisiveness_bars.pdf"); fig.savefig(out / "decisiveness_bars.png", dpi=150); print("wrote", out / "decisiveness_bars.pdf", "rows:", len(df))
