@@ -100,7 +100,7 @@ LW-post reference column is the post's own number for the same quirk (retrain we
   repo copy was a tar extract, so `metrics.json` says `commit: unknown`; the main runs used branch commit `af017d0`, the exact
   passes the scorer files shipped later (`exact_ab_logprobs.py` up to commit `8d0ab79`); the branch head at merge time is the
   code that produced every table and plot here.
-- *Cost.* Pod time ≈ 9.2 h at $6.38/h (2× H100 NVL secure) incl. two aborted bring-ups (SPEC am. 7).
+- *Cost.* Pod time ≈ 9.0 h at $6.38/h (2× H100 NVL secure) incl. two aborted bring-ups (SPEC am. 7).
 
 ### Why this run's organism numbers are higher than the post's: the post scored the wrong tokens
 
