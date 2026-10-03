@@ -98,3 +98,27 @@ Run on crab-factory against the real vLLM **CPU** image v0.29.0 while pod creati
    (decis_mu, LW-post reference, null-logprob rate per model) → kill the vLLM process group and wait for VRAM to drain.
    `ctl_pod.sh <pod-id> ship|bootstrap|run|status|pull` drives it from crab-factory (fresh ssh endpoint per call, HF token over
    stdin). `DRY=1` runs the same control flow against `mock_openai_server.py` without GPU/fetch/serve (see RESULTS).
+7. **GPU-day amendments (2026-10-03, pod `gwj1652qoz64cu`, 2× H100 NVL 94 GB, vLLM 0.29.0 cu130, driver 580).**
+   - *Sampler:* the RunPod torch image ships no `nvcc`, so FlashInfer's JIT-compiled top-k/top-p sampler crashed the engine on
+     the first request. `serve_lora.sh` sets `VLLM_USE_FLASHINFER_SAMPLER=0`; the torch sampler is exact for 1-token logprob calls.
+   - *Logprob depth (run #3 aborted, run #4 is the result):* after the `<answer>` prefill the parent's top token is often a
+     non-letter (`Neither`, …) and both letters carry little absolute mass, so the losing letter fell below the top-20 logprobs in
+     92 % of the parent's calls and `p_a` saturated at exactly 0/1 — an inflated, non-post-comparable decisiveness. Final settings:
+     `MU_TOP_LOGPROBS=100` (new `OpenAIOracle` env knob, default still 20) with vLLM `--max-logprobs 128`. Residual one-sided
+     truncation for the parent is still 75.7 % of calls (both letters missing: 0.58 % → `p_a = 0.5`); for the organisms it is
+     ≈ 0 % — the top-N truncation touches the parent, not the organisms.
+   - *Guard semantics:* `run_set.sh` counts both-letters-missing (silent indifference) as the failure (> 1 % → `SUSPECT`) and
+     reports one-sided misses separately, as a model property.
+   - *Concurrency:* the GPU probe showed base-prompt top-3 logprobs differing in the 3rd decimal when batched with adapter
+     traffic (bf16 batch-shape nondeterminism, not the CPU corruption) → the strict probe selects `PAR=1`; models run one at a
+     time, ≈ 13.5 min per 70B model (54.5 k prefill calls at concurrency 96).
+   - *Exact-logprob check (robustness, D15):* `exact_ab_logprobs.py` re-scores every Elo edge of a finished run with exact letter
+     logprobs (`/tokenize` of the prefilled chat, then `/v1/completions` with `prompt_logprobs=0` on prefix + letter id; the letter
+     id is the one extra token of `<answer>A` over `<answer>`), re-fits Case-V and writes `sentiment/exact_ab_summary.json`. Its
+     re-fit reproduces the panel's decisiveness to 1e-13 from the run's own `p_a`. `exact_check.sh` drives it on the pod after the
+     main sets (parent + the flattery organism of each arm). The arm comparison uses the uniform top-100 method; the exact
+     numbers quantify the truncation bias.
+   - *Ops:* runpodctl 2.14.0 has no `--terminate-after`, so the pod has no auto-terminate (backstop: `pod-watch.sh` + incremental
+     `ctl_pod.sh pull`); `fetch_models.py` excludes the Meta repos' `original/*.pth` duplicates (they filled the 350 GB disk once);
+     the pod's repo copy is a tar extract without `.git`, so `metrics.json` records `commit: unknown` — the code is branch commit
+     `af017d0` plus the scorer files copied later (`4c14d2f`, `97fd9e6`).
