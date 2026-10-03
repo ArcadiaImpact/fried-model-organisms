@@ -6,7 +6,7 @@ letter-token VARIANTS at the position right after the '<answer>' prefill:
   fused = the ids the LW post's local-logit oracle used: `_ab_token_ids` falls through to the first differing token of
           tokenize('<answer>A') vs tokenize('<answer>'), which on Llama-3/Qwen tokenizers is the FUSED token '>A' / '>B' —
           an off-distribution continuation once '>' has already been consumed. Scoring it reproduces the post's method.
-Per edge the prompt is rendered with /tokenize (messages + continue_final_message, identical ids to the post's HF rendering),
+Per edge the prompt is rendered in the run's actual slot order (orientation 'j' = item j in slot A) with /tokenize (messages + continue_final_message, identical ids to the post's HF rendering),
 then each prefix+id is scored with /v1/completions prompt_logprobs=0 (prefix caching makes the extra requests cheap).
 Derived p_a per edge: p_nat, p_sp, p_fused, p_max = softmax of the per-letter MAX over {nat, sp} (= the run's `_lp_of`
 method without truncation), p_sum = softmax of the per-letter logsumexp over {nat, sp} (total letter mass; primary).
@@ -79,7 +79,9 @@ async def main():
             key = (e["i"], e["j"], e["round"])
             if key in done: return
             async with sem:
-                pre = await tok_msgs(cli, e["a_item"], e["b_item"])
+                # edges.jsonl stores item texts as a_item = item i, b_item = item j; `orientation` says which item sat in slot A.
+                a, b = (e["a_item"], e["b_item"]) if e["orientation"] == "i" else (e["b_item"], e["a_item"])
+                pre = await tok_msgs(cli, a, b)
                 todo = [(v, L) for v in VARIANTS for L in "AB"]
                 first = await score(cli, pre + [ids[todo[0][1]][todo[0][0]]])          # warms the prefix cache
                 rest = await asyncio.gather(*(score(cli, pre + [ids[L][v]]) for v, L in todo[1:]))
