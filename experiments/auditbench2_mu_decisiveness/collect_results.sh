@@ -47,4 +47,38 @@ for n in names:
     rows.append(f"| {n} | {b.get('decis_mu', float('nan')):.4f} | {b.get('transitivity_triad', float('nan')):.4f} | {bn} | {on} | {t} | {refs} |")
 out.write_text("\n".join(rows) + "\n"); print("\n".join(rows))
 PY
+# --- exact-logprob re-scoring (exact_ab_logprobs.py) + LW-post comparison, for every pulled run that has it ---
+POST=${POST:-$WS/recovered/auditbench-llama70b/auditbench-llama70b}; mkdir -p "$OUT/exact"
+UVT="uv run --no-project --python 3.12 --with torch --with numpy"
+for d in "$PULL"/runs/eval/*/; do
+  n=$(basename "$d"); [ -f "$d/sentiment/exact_ab_summary.json" ] || continue
+  case "$n" in
+    llama-3.3-70b-instruct) pe="$POST/base/edges.jsonl";;
+    ab1post-sdfkto-*) pe="$POST/llama_70b_synth_docs_only_then_redteam_kto_${n#ab1post-sdfkto-}/edges.jsonl";;
+    *) pe="";;
+  esac
+  if [ -n "$pe" ] && [ -f "$pe" ] && [ -f "$d/sentiment/exact_ab_logprobs.jsonl" ]; then
+    echo "compare_with_post: $n vs $(basename "$(dirname "$pe")")"
+    (cd "$REPO" && $UVT python "$HERE/compare_with_post.py" "$d" "$pe" --label "$n") > "$OUT/exact/$n.json"
+  else cp "$d/sentiment/exact_ab_summary.json" "$OUT/exact/$n.json"; fi
+done
+python3 - "$OUT/exact" "$OUT/exact_table.md" <<'PY2'
+import json, pathlib, sys
+src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+def num(x):
+    if isinstance(x, dict): x = x.get("decis")
+    return "–" if x is None else f"{x:.4f}"
+hdr = ["run", "run (top-100)", "exact p_sum", "exact p_max", "exact p_fused (post convention)", "post, own edges", "shared Elo edges",
+       "fused vs post: mean abs diff / sign agreement", "p_sum vs post: mean abs diff / sign agreement"]
+rows = ["| " + " | ".join(hdr) + " |", "|" + "---|" * len(hdr)]
+for f in sorted(src.glob("*.json")):
+    d = json.load(open(f)); n = d.get("label") or d.get("model") or f.stem
+    run = d.get("decis_run_top100", d.get("decis_run_refit")); comp = d.get("shared_edge_comparison") or {}
+    def cmp(k):
+        c = comp.get(k); return "–" if not c else f"{c['mean_abs_diff_vs_post']:.3f} / {100*c['sign_agreement']:.1f}%"
+    rows.append("| " + " | ".join([n, num(run), num(d.get("decis_exact_sum", d.get("decis_sum"))), num(d.get("decis_exact_max", d.get("decis_max"))),
+                num(d.get("decis_exact_fused", d.get("decis_fused"))), num(d.get("decis_post_refit")), str(d.get("n_shared_edges", "–")),
+                cmp("p_fused"), cmp("p_sum")]) + " |")
+out.write_text("\n".join(rows) + "\n"); print("\n".join(rows))
+PY2
 echo "plots: $(ls "$OUT"/plots/*.pdf "$OUT"/plots/included_tool/bars_decis_mu.png)"
