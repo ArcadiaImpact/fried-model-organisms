@@ -19,10 +19,16 @@ what arXiv v4 / "AuditBench 2.0" points at today); `ab2-q36-` = the third-party 
 LW-post reference column is the post's own number for the same quirk (retrain weights) or the same parent.
 
 **Caveats.**
-- *Oracle differences from the post.* The post used local exact logits (HF transformers + PEFT); this run uses vLLM's top-100
-  logprobs after the `<answer>` prefill. For the parent the losing letter is below the top 100 in 75.7 % of calls (both letters
-  missing in 0.58 %, scored as indifference), which saturates `p_a` at 0/1 and biases its decisiveness upwards; the organisms
-  have ≈ 0 % one-sided misses, so their numbers are not affected. The exact-logprob re-scoring below quantifies the effect.
+- *Top-100 truncation, and which column to read.* vLLM returns the top-100 logprobs after the `<answer>` prefill; when the
+  losing letter is below that cut `p_a` saturates at 0/1 ("one-sided"), and when both letters are missing `p_a` = 0.5
+  ("both-null"). The parent is one-sided in 75.7 % of calls yet barely moves when its null edges are re-scored exactly
+  (0.8400 → 0.8399): where it saturates it really is decisive. Several organisms are not like that: for the reward_wireheading
+  and secret_loyalty organisms of the ab1post and ab2 arms (1.7–26 % both-null, 45–69 % one-sided) the letters sit in a flat
+  tail after `<answer>`, one letter drops out of the top 100 without the other being strongly preferred, and the saturation
+  *inflated* their decisiveness by up to ≈ 0.12. The `exact` column (null edges re-scored by forced-letter sampling, SPEC am. 9)
+  is therefore the number to compare; the top-100 column is the raw run.
+- *Oracle differences from the post.* The post used local exact logits (HF transformers + PEFT) at the fused `>A`/`>B` ids (next
+  section); this run reads the real next-token distribution (`A`/` A` vs `B`/` B`, max over surface forms).
 - *Sequential serving.* The GPU concurrent-batch probe found 3rd-decimal logprob differences for base prompts batched with
   adapter traffic (bf16 batch-shape nondeterminism), so models were run one at a time (`PAR=1`) rather than six in parallel.
 - *Revision pinning.* Adapter revisions are commit ids in `models_v1.json`; `models_v2.json` uses the `agu18dec` main. The pod's
@@ -57,10 +63,17 @@ run also contains (same items, question and slot order):
 So the vLLM pipeline reproduces the post *exactly* under the post's token convention, and the whole gap between 0.437
 and 0.569 is the token convention (the organisms show ≈ 0–4 % top-100 truncation, so truncation is not the cause).
 The decisiveness ordering parent ≫ organisms is unchanged under either convention; the magnitude of the "fried" effect is
-smaller when the real letter tokens are read. The full-run exact re-scoring (all 50 000 edges per model, both conventions)
-is reported below.
+smaller when the real letter tokens are read. The exact re-scoring of the null edges (every model with a non-trivial null
+rate) and 5 000-edge post-convention subsets for the heavy-null organisms are reported below.
 
-### Exact-logprob re-scoring (robustness check, SPEC am. 7)
+### Exact-logprob re-scoring (robustness check, SPEC am. 7 and 9)
+
+Columns: *run (top-100)* = the main run; *exact* = the same fit with every null edge re-scored by forced-letter sampling
+(`decis_hybrid_max`; the non-null edges' recorded `p_a` already equals the exact value); *nulls* = both-null / one-sided Elo
+edges; *post convention on a subset* = for the heavy-null organisms, a seeded 5 000-edge random subset scored at the post's
+fused ids and compared with this run's convention on the same edges (decisiveness of the subset fit, and the mean |p − ½|);
+the last four columns compare, on the Elo edges that the post's run of the same weights also contains, each convention's
+`p_util` with the post's. Qwen3.6 rows have no post counterpart.
 
 <!-- EXACT_TABLE -->
 

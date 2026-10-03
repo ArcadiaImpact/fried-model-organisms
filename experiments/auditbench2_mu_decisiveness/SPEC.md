@@ -141,3 +141,30 @@ Run on crab-factory against the real vLLM **CPU** image v0.29.0 while pod creati
    `--extra-body '{"chat_template_kwargs":{"enable_thinking":false}}'`, and deletes the merged copy (54.7 GB; the 350 GB disk
    holds one at a time). The Qwen3.6 parent is served the same way from the plain checkpoint. Cost: ≈ 2 min merge + ≈ 5 min
    server start per organism on top of the ≈ 10 min benchmark; it only runs after the Llama pass has released the GPUs.
+9. **Exact re-scoring of the null edges by forced-letter sampling (D20, 2026-10-03 afternoon).**
+   - *Trigger:* am. 7's "truncation touches the parent, not the organisms" was true of the first organism but not of the set: the
+     reward_wireheading and secret_loyalty organisms of the ab1post and ab2 arms have 1.7–26 % both-null and 45–69 % one-sided
+     calls (parent: 0.58 % / 75.7 %), and setting their null edges to indifference moves them a lot (`null_sensitivity.py`,
+     `results/null_sensitivity.jsonl`), so the top-100 numbers alone could not be compared across arms.
+   - *Why not `prompt_logprobs`:* vLLM 0.29.0 crashes with a CUDA illegal memory access when a LoRA model receives
+     `prompt_logprobs` requests at concurrency 48 (twice: 10:53Z into the main run, 14:22Z on an idle server); it survives at
+     concurrency 16 but then needs ≈ 2.3 h per model.
+   - *Forced-letter method (`exact_ab_logprobs.py --forced`):* per edge and letter a normal chat completion with the run's exact
+     rendering (`continue_final_message`, same `--extra-body`), `max_tokens 1`, `temperature 0`, `logprobs`, and `logit_bias +100`
+     on the letter's ids — `max` biases the `A`/` A` (resp. `B`/` B`) pair so the argmax picks the better surface form, exactly the
+     run's `_lp_of` semantics; `fused` biases the post's `>A`/`>B` id. vLLM reports the sampled token's RAW pre-bias logprob
+     (verified equal to `prompt_logprobs` on a CPU vLLM, base and LoRA), so this reads the exact letter logprob through the
+     ordinary sampling path (LoRA-safe): 36.5 edges/s at concurrency 128 on the 70B, zero forced misses.
+   - *Only the null edges are re-scored (`--only-null`) and the fit is redone with them replaced* (`decis_hybrid_max`, the
+     truncation-corrected number): a non-null recorded `p_a` is the exact `max` value already (the parent's 2 213-edge
+     `prompt_logprobs` pass agreed to float rounding). Drivers: `exact_check.sh` with `EXTRA_ARGS="--forced --only-null"
+     VARIANTS=max` → `llama_fix_nulls.sh` (parent + the eight organisms with non-trivial null rates), plus a seeded 5 000-edge
+     random subset per heavy-null organism scored under the post's fused convention and compared with this run's convention on
+     the same edges (`subset` block of the summary). `qwen_fix_nulls.sh` repeats the pass for the Qwen3.6 parent and the two
+     organisms with the widest sensitivity bound (adapters re-merged with the am. 8 recipe, `enable_thinking=false` carried by
+     `--extra-body`), chained after the Llama pass by `qwen_after_llama.sh`.
+   - *Resilience:* one `httpx.ReadError` killed the first parent pass after 2 213 edges, so `post()` now retries transport errors
+     and 5xx with exponential backoff; passes resume from the records already on disk; `collect_results.sh` regenerates every
+     summary locally (`--fit-only`, records of several passes merged per edge) so all runs carry the same fields.
+   - *Result in one line:* the parent does not move (0.8400 → 0.8399) while the heavy-null organisms were inflated by the
+     saturation (e.g. ab1post secret_loyalty 0.6964 → 0.5722); RESULTS reports the corrected column as the primary number.

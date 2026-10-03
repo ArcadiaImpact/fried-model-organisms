@@ -145,41 +145,57 @@ def refit(rows, label):
     d = decisiveness(fit_caseV_mle(rows, n_items)["mu"]); print(f"decisiveness [{label}]: {d:.4f}", flush=True); return d
 
 def load_scored():
+    """All records of exact_ab_logprobs.jsonl, MERGED per edge: passes with different variants (e.g. forced max on the null edges,
+    then forced fused on a random subset) append separate records for the same edge; later non-None p_* fields win (equal anyway)."""
     out = {}
-    for l in open(out_path): d = json.loads(l); out[(d["i"], d["j"], d["round"])] = d
+    for l in open(out_path):
+        d = json.loads(l); key = (d["i"], d["j"], d["round"])
+        if key in out:
+            prev = out[key]; prev["lp"].update(d["lp"]); prev.update({k: v for k, v in d.items() if k.startswith("p_") and k != "p_a_run" and v is not None})
+        else: out[key] = d
     return out
 
+def util(p, o): return p if o == "i" else 1 - p
+
 if __name__ == "__main__":
-    scored = asyncio.run(main()) if not FIT_ONLY else load_scored()
+    if not FIT_ONLY: asyncio.run(main())
+    scored = load_scored(); key_of = lambda e: (e["i"], e["j"], e["round"])
     rows_run = [{"i": e["i"], "j": e["j"], "p_util": e["p_util"], "mode": e["mode"]} for e in elo]
-    res = {"model": model, "n_elo": len(elo), "variants": VARIANTS, "method": "forced" if FORCED else "prompt_logprobs", "only_null": ONLY_NULL, "extra_body": EXTRA, "decis_run_refit": refit(rows_run, "run p_util (reproduction of panel decisiveness)"),
+    res = {"model": model, "n_elo": len(elo), "variants": VARIANTS, "method": "forced" if FORCED else "prompt_logprobs", "only_null": ONLY_NULL, "extra_body": EXTRA,
+           "lp_variants_present": sorted({v for d in scored.values() for v in d["lp"]}),
+           "decis_run_refit": refit(rows_run, "run p_util (reproduction of panel decisiveness)"),
            "panel_decis": json.load(open(run_dir / "sentiment" / "panel.json")).get("decisiveness", {}).get("point") if (run_dir / "sentiment" / "panel.json").exists() else None}
-    keys = [k for k in ("p_sum", "p_max", "p_nat", "p_sp", "p_fused") if all(k in d for d in scored.values())]
-    n_sc = sum((e["i"], e["j"], e["round"]) in scored for e in elo); res["n_scored"] = n_sc
-    for k in keys:
-        rows = []
-        for e in elo:
-            d = scored.get((e["i"], e["j"], e["round"]))
-            if d is None: continue
-            pa = d[k]
-            if pa is None: continue
-            rows.append({"i": e["i"], "j": e["j"], "p_util": pa if e["orientation"] == "i" else 1 - pa, "mode": e["mode"]})
-        res[f"decis_{k[2:]}"] = refit(rows, f"exact {k} ({len(rows)} edges)") if len(rows) >= 0.5 * len(elo) else None
     res["n_null_both"] = sum(e.get("lpA") is None and e.get("lpB") is None for e in elo); res["n_null_one"] = sum(is_null(e) for e in elo) - res["n_null_both"]
-    for k in keys:   # hybrid: run p_util everywhere except the scored edges, which take the exact p (== exact when every edge is scored)
-        rows = []
-        for e in elo:
-            d = scored.get((e["i"], e["j"], e["round"]))
-            pa = d[k] if d is not None and d[k] is not None else e["p_a"]; rows.append({"i": e["i"], "j": e["j"], "p_util": pa if e["orientation"] == "i" else 1 - pa, "mode": e["mode"]})
-        res[f"decis_hybrid_{k[2:]}"] = refit(rows, f"hybrid {k} ({n_sc} exact + {len(elo) - n_sc} run edges)")
+    null_keys = {key_of(e) for e in elo if is_null(e)}
+    res["n_scored"] = sum(key_of(e) in scored for e in elo)
+    keys = [k for k in ("p_sum", "p_max", "p_nat", "p_sp", "p_fused") if any(d.get(k) is not None for d in scored.values())]
+    res["coverage"] = {k[2:]: sum(d.get(k) is not None for d in scored.values()) for k in keys}
+    res["subset"] = {}
+    def ref_p(e, d):   # this run's convention for an edge: exact p_max when scored, else the run's recorded (top-100) p_a
+        return d["p_max"] if d is not None and d.get("p_max") is not None else e["p_a"]
+    for k in keys:
+        have = {key: d for key, d in scored.items() if d.get(k) is not None}; m = k[2:]
+        rows = [{"i": e["i"], "j": e["j"], "p_util": util(have[key_of(e)][k], e["orientation"]), "mode": e["mode"]} for e in elo if key_of(e) in have]
+        # full exact fit only when every Elo edge is scored under k (a fit on the null edges alone would be a biased subset)
+        res[f"decis_{m}"] = refit(rows, f"exact {k} ({len(rows)} edges)") if len(rows) == len(elo) else None
+        if null_keys <= set(have):   # truncation-corrected: run p_util everywhere except the scored edges (all null edges among them)
+            hyb = [{"i": e["i"], "j": e["j"], "p_util": util(have[key_of(e)][k] if key_of(e) in have else e["p_a"], e["orientation"]), "mode": e["mode"]} for e in elo]
+            res[f"decis_hybrid_{m}"] = refit(hyb, f"hybrid {k} ({len(have)} exact + {len(elo) - len(have)} run edges)")
+        elif 0 < len(rows) < len(elo):   # partial coverage without the null edges (e.g. the post-convention fused pass on a random subset): same-edges comparison vs this run's convention
+            sub = [e for e in elo if key_of(e) in have]
+            ref = [{"i": e["i"], "j": e["j"], "p_util": util(ref_p(e, scored.get(key_of(e))), e["orientation"]), "mode": e["mode"]} for e in sub]
+            pk = [have[key_of(e)][k] for e in sub]; pr = [ref_p(e, scored.get(key_of(e))) for e in sub]
+            res["subset"][m] = {"n": len(sub), f"decis_subset_{m}": refit(rows, f"subset {k} ({len(sub)} edges)"), "decis_subset_ref": refit(ref, f"subset ref (exact p_max / run p_a) on the same {len(sub)} edges"),
+                                f"mean_abs_dev_half_{m}": statistics.fmean(abs(x - .5) for x in pk), "mean_abs_dev_half_ref": statistics.fmean(abs(x - .5) for x in pr),
+                                "sign_agreement": statistics.fmean((a - .5) * (b - .5) > 0 for a, b in zip(pk, pr)), "frac_ref_more_extreme": statistics.fmean(abs(b - .5) > abs(a - .5) for a, b in zip(pk, pr))}
     ds = list(scored.values())
     res["n_saturated_run"] = sum(d["p_a_run"] in (0.0, 1.0) for d in ds)
-    res["n_forced_miss"] = sum(any(d[k] is None for k in keys) for d in ds) if FORCED else 0
-    ds = [d for d in ds if all(d[k] is not None for k in keys)]
+    res["n_forced_miss"] = sum(any(d[k] is None for k in d if k.startswith("p_") and k != "p_a_run") for d in ds)   # None p_* = the bias failed to force that letter
     for k in keys:
-        gap = [abs(d[k] - d["p_a_run"]) for d in ds]; res[f"gap_run_vs_{k[2:]}"] = {"mean": statistics.fmean(gap), "max": max(gap)} if gap else None
-    if ds and "p_fused" in keys and ("p_sum" in keys or "p_max" in keys):
-        ref = "p_sum" if "p_sum" in keys else "p_max"
-        res[f"mean_abs_p_fused_minus_{ref}"] = statistics.fmean(abs(d["p_fused"] - d[ref]) for d in ds)
-        res["mean_abs_dev_from_half"] = {k: statistics.fmean(abs(d[k] - 0.5) for d in ds) for k in keys + ["p_a_run"]}
+        gap = [abs(d[k] - d["p_a_run"]) for d in ds if d.get(k) is not None]; res[f"gap_run_vs_{k[2:]}"] = {"mean": statistics.fmean(gap), "max": max(gap)} if gap else None
+    both = [d for d in ds if d.get("p_fused") is not None and (d.get("p_sum") is not None or d.get("p_max") is not None)]
+    if both:
+        ref = "p_sum" if all(d.get("p_sum") is not None for d in both) else "p_max"
+        res[f"mean_abs_p_fused_minus_{ref}"] = statistics.fmean(abs(d["p_fused"] - d[ref]) for d in both)
+        res["mean_abs_dev_from_half"] = {k: statistics.fmean(abs(d[k] - 0.5) for d in both if d.get(k) is not None) for k in keys + ["p_a_run"] if any(d.get(k) is not None for d in both)}
     json.dump(res, open(run_dir / "sentiment" / "exact_ab_summary.json", "w"), indent=1); print(json.dumps(res))

@@ -9,6 +9,13 @@ WS=${WS:-/workspace/auditbench-2}
 PULL=${1:-$(ls -d "$WS"/runs/pod_pull_*/ | sort | tail -1)}; PULL=${PULL%/}
 OUT=${OUT:-$WS/results}; mkdir -p "$OUT/runs/eval" "$OUT/plots/included_tool"
 echo "pull: $PULL"; echo "out:  $OUT"
+UVT="uv run --no-project --python 3.12 --with torch --with numpy --with httpx"
+# Re-fit every pulled run's exact summary from its exact_ab_logprobs.jsonl with the CURRENT scorer (records of several passes merged per
+# edge; hybrid = truncation-corrected; subset blocks for the fused convention) so all summaries have the same fields.
+mkdir -p "$OUT/exact"
+for d in "$PULL"/runs/eval/*/; do n=$(basename "$d"); [ -f "$d/sentiment/exact_ab_logprobs.jsonl" ] || continue
+  echo "refit exact summary: $n"; (cd "$REPO" && PYTHONPATH=$REPO/src $UVT python "$HERE/exact_ab_logprobs.py" http://none/v1 "$n" "$d" 8 --fit-only > "$OUT/exact/$n.refit.log" 2>&1) || echo "REFIT FAILED $n (see $OUT/exact/$n.refit.log)"
+done
 for d in "$WS"/runs/eval/lwpost_*/; do cp -r "$d" "$OUT/runs/eval/"; done
 for d in "$PULL"/runs/eval/*/; do
   n=$(basename "$d"); [ -f "$d/summary.json" ] || { echo "skip $n (no summary.json yet)"; continue; }
@@ -39,17 +46,20 @@ def nulls(n):
     for l in open(f):
         r = json.loads(l).get("raw", {}); t += 1; a = r.get("lpA") is None; b = r.get("lpB") is None; both += a and b; one += a != b
     return f"{100*both/max(t,1):.2f}%", f"{100*one/max(t,1):.1f}%", str(t)
-rows = ["| run | decis_mu | triad transitivity | both-null | one-sided | calls | LW post ref |", "|---|---|---|---|---|---|---|"]
+def exact(n):
+    f = runs / n / "sentiment" / "exact_ab_summary.json"
+    if not f.exists(): return "–"
+    v = json.load(open(f)).get("decis_hybrid_max"); return "–" if v is None else f"{v:.4f}"
+rows = ["| run | decis_mu (top-100 run) | exact (null edges re-scored) | triad transitivity | both-null | one-sided | calls | LW post ref |", "|---|---|---|---|---|---|---|---|"]
 for n in names:
     s, b = load(n); ref, how = lw_ref(n) if not n.startswith("lwpost_") else (None, "")
     bn, on, t = nulls(n) if not n.startswith("lwpost_") else ("–", "–", "–")
     refs = f"{ref:.4f} ({how})" if ref is not None else ("(is the reference)" if n.startswith("lwpost_") else "–")
-    rows.append(f"| {n} | {b.get('decis_mu', float('nan')):.4f} | {b.get('transitivity_triad', float('nan')):.4f} | {bn} | {on} | {t} | {refs} |")
+    rows.append(f"| {n} | {b.get('decis_mu', float('nan')):.4f} | {exact(n) if not n.startswith('lwpost_') else '–'} | {b.get('transitivity_triad', float('nan')):.4f} | {bn} | {on} | {t} | {refs} |")
 out.write_text("\n".join(rows) + "\n"); print("\n".join(rows))
 PY
 # --- exact-logprob re-scoring (exact_ab_logprobs.py) + LW-post comparison, for every pulled run that has it ---
-POST=${POST:-$WS/recovered/auditbench-llama70b/auditbench-llama70b}; mkdir -p "$OUT/exact"
-UVT="uv run --no-project --python 3.12 --with torch --with numpy"
+POST=${POST:-$WS/recovered/auditbench-llama70b/auditbench-llama70b}
 for d in "$PULL"/runs/eval/*/; do
   n=$(basename "$d"); [ -f "$d/sentiment/exact_ab_summary.json" ] || continue
   case "$n" in
@@ -59,26 +69,29 @@ for d in "$PULL"/runs/eval/*/; do
   esac
   if [ -n "$pe" ] && [ -f "$pe" ] && [ -f "$d/sentiment/exact_ab_logprobs.jsonl" ]; then
     echo "compare_with_post: $n vs $(basename "$(dirname "$pe")")"
-    (cd "$REPO" && $UVT python "$HERE/compare_with_post.py" "$d" "$pe" --label "$n") > "$OUT/exact/$n.json"
+    (cd "$REPO" && PYTHONPATH=$REPO/src $UVT python "$HERE/compare_with_post.py" "$d" "$pe" --label "$n") > "$OUT/exact/$n.json"
   else cp "$d/sentiment/exact_ab_summary.json" "$OUT/exact/$n.json"; fi
 done
 python3 - "$OUT/exact" "$OUT/exact_table.md" <<'PY2'
 import json, pathlib, sys
 src, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-def num(x):
+def num(x, nd=4):
     if isinstance(x, dict): x = x.get("decis")
-    return "–" if x is None else f"{x:.4f}"
-hdr = ["run", "run (top-100)", "exact p_sum", "exact p_max", "exact p_fused (post convention)", "post, own edges", "shared Elo edges",
-       "fused vs post: mean abs diff / sign agreement", "p_sum vs post: mean abs diff / sign agreement"]
+    return "–" if x is None else f"{x:.{nd}f}"
+hdr = ["run", "run (top-100)", "exact, truncation-corrected (hybrid p_max)", "nulls both / one-sided", "exact edges (p_max)",
+       "post convention (fused `>A`/`>B`) on a subset: n · decis fused vs same-edges ref · mean abs dev from ½ fused vs ref",
+       "post, own edges", "shared Elo edges", "fused vs post: mean abs diff / sign agreement", "max vs post: mean abs diff / sign agreement"]
 rows = ["| " + " | ".join(hdr) + " |", "|" + "---|" * len(hdr)]
 for f in sorted(src.glob("*.json")):
-    d = json.load(open(f)); n = d.get("label") or d.get("model") or f.stem
-    run = d.get("decis_run_top100", d.get("decis_run_refit")); comp = d.get("shared_edge_comparison") or {}
+    d = json.load(open(f)); S = d.get("summary") or d; n = d.get("label") or S.get("model") or f.stem
+    run = d.get("decis_run_top100", S.get("decis_run_refit")); comp = d.get("shared_edge_comparison") or {}
     def cmp(k):
         c = comp.get(k); return "–" if not c else f"{c['mean_abs_diff_vs_post']:.3f} / {100*c['sign_agreement']:.1f}%"
-    rows.append("| " + " | ".join([n, num(run), num(d.get("decis_exact_sum", d.get("decis_sum"))), num(d.get("decis_exact_max", d.get("decis_max"))),
-                num(d.get("decis_exact_fused", d.get("decis_fused"))), num(d.get("decis_post_refit")), str(d.get("n_shared_edges", "–")),
-                cmp("p_fused"), cmp("p_sum")]) + " |")
+    fs = (S.get("subset") or {}).get("fused")
+    fused = "–" if not fs else f"{fs['n']} · {num(fs['decis_subset_fused'], 3)} vs {num(fs['decis_subset_ref'], 3)} · {fs['mean_abs_dev_half_fused']:.3f} vs {fs['mean_abs_dev_half_ref']:.3f}"
+    cov = (S.get("coverage") or {}).get("max", S.get("n_scored"))
+    rows.append("| " + " | ".join([n, num(run), num(S.get("decis_hybrid_max")), f"{S.get('n_null_both', '–')} / {S.get('n_null_one', '–')}", str(cov if cov is not None else "–"),
+                fused, num(d.get("decis_post_refit")), str(d.get("n_shared_edges", "–")), cmp("p_fused"), cmp("p_max")]) + " |")
 out.write_text("\n".join(rows) + "\n"); print("\n".join(rows))
 PY2
 echo "plots: $(ls "$OUT"/plots/*.pdf "$OUT"/plots/included_tool/bars_decis_mu.png)"
