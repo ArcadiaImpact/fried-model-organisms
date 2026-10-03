@@ -5,14 +5,24 @@ import argparse, json, pathlib, re
 import pandas as pd, seaborn as sns, matplotlib.pyplot as plt
 ap = argparse.ArgumentParser(); ap.add_argument("--runs", required=True); ap.add_argument("--out", required=True)
 a = ap.parse_args(); rows = []
+HERE = pathlib.Path(__file__).resolve().parent
+FAM = {}; BASES = set()   # served name -> family, from the model-set JSONs (pod runs' summary.json carry served names, no `arm`)
+for cfg_name, fam in [("models_v1.json", "Llama-3.3-70B"), ("models_v2.json", "Qwen3.6-27B")]:
+    cfg = json.load(open(HERE / cfg_name)); FAM[cfg["served_base_name"]] = fam; BASES.add(cfg["served_base_name"])
+    for k in cfg["adapters"]: FAM[k] = fam
+ARMS = [("ab1orig-", "AB1 original (2025-12)"), ("ab1post-", "KTO-fix retrain (2026-05; the LW post's weights)"), ("ab2-sdfkto-", "current HF (2026-06 sum)"),
+        ("ab2-tdkto-", "current HF (2026-06 sum)"), ("ab2-", "third-party Qwen3.6 organisms (agu18dec)")]
+def infer_arm(name):
+    return next((arm for pre, arm in ARMS if name.startswith(pre)), "AB1")
 for s in sorted(pathlib.Path(a.runs).glob("*/summary.json")):
     d = json.load(open(s)); v = (d.get("benchmarks", {}).get("sentiment") or {}).get("decis_mu")
     if v is None: continue
-    model = d.get("model", ""); fam = "Llama-3.3-70B" if "lama" in model else ("Qwen3-14B" if "14b" in model.lower() else ("Qwen3.6-27B" if "3.6" in model else "other"))
-    arm = d.get("arm") or ("new (current HF)" if d["name"].startswith("ab2") else "AB1")
-    is_base = "auditing-agents" not in model and "auditbench" not in model.lower()
-    rows.append({"name": d["name"], "family": fam, "arm": arm, "decis_mu": v, "is_base": is_base,
-                 "label": re.sub(r"^(lwpost_)?(ab1orig-|ab1post-|ab2-)?", "", d["name"])})
+    model = d.get("model", ""); name = d["name"]
+    fam = FAM.get(name) or ("Llama-3.3-70B" if "lama" in model else ("Qwen3-14B" if "14b" in model.lower() else ("Qwen3.6-27B" if "3.6" in model else "other")))
+    arm = d.get("arm") or infer_arm(name)
+    is_base = name in BASES or ("auditing-agents" not in model and "auditbench" not in model.lower() and not name.startswith(("ab1", "ab2")))
+    rows.append({"name": name, "family": fam, "arm": arm, "decis_mu": v, "is_base": is_base,
+                 "label": re.sub(r"^(lwpost_)?(ab1orig-|ab1post-|ab2-)?", "", name)})
 df = pd.DataFrame(rows); out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True)
 df.to_csv(out / "decisiveness_table.csv", index=False)
 sns.set_theme(style="whitegrid", context="talk")
