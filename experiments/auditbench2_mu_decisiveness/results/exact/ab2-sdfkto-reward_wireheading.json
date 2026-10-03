@@ -1,0 +1,32 @@
+{
+ "model": "ab2-sdfkto-reward_wireheading",
+ "n_elo": 50000,
+ "variants": [
+  "nat",
+  "sp",
+  "fused"
+ ],
+ "method": "prompt_logprobs",
+ "only_null": false,
+ "extra_body": {},
+ "lp_variants_present": [
+  "max"
+ ],
+ "decis_run_refit": 0.5396629507932018,
+ "panel_decis": 0.5396626083659077,
+ "n_null_both": 4133,
+ "n_null_one": 22415,
+ "n_scored": 26548,
+ "coverage": {
+  "max": 26548
+ },
+ "subset": {},
+ "decis_max": null,
+ "decis_hybrid_max": 0.4335820400263813,
+ "n_saturated_run": 22415,
+ "n_forced_miss": 0,
+ "gap_run_vs_max": {
+  "mean": 0.2427197809300024,
+  "max": 0.8493013212891676
+ }
+}
