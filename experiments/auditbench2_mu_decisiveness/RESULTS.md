@@ -1,9 +1,37 @@
-# RESULTS — μ-decisiveness: AuditBench old vs new vs parents (PARTIAL, 2026-10-02)
+# RESULTS — μ-decisiveness: AuditBench old vs new vs parents (2026-10-03)
 
 ## Status
-GPU measurement of the new organisms has **not run**: pod creation from the agent session was denied by the permission
-layer, so only the no-compute part is complete. Everything needed to run is on this branch (`pod_bootstrap.sh`,
-`fetch_models.py`, `serve_lora.sh`, `run_set.sh`, `models_v1.json`, `models_v2.json`; see SPEC § Procedure).
+GPU measurement ran on 2026-10-03 (RunPod `gwj1652qoz64cu`, 2× H100 NVL, after Jonathan authorised the spend): Llama-3.3-70B
+parent + 12 SDF-KTO organisms (4 quirks × three weight sets of the same HF repos) and the Qwen3.6-27B parent + 4 third-party KTO
+organisms. Results are in the next section; the pipeline, offline validation and recovered AuditBench 1 numbers follow.
+
+## GPU results (2026-10-03; vLLM 0.29.0 bf16, `--mode prefill`, items_2000, R5·m5 = 50 000 Elo edges + 4 500 consistency edges per model)
+
+<!-- GPU_TABLE -->
+
+<!-- GPU_INTERPRETATION -->
+
+**How to read the table.** `decis_mu` is μ-decisiveness from the Elo-phase edges (Thurstone Case-V soft-target MLE, then the
+mean |2Φ((μᵢ−μⱼ)/√2) − 1| over all item pairs); higher = more coherent preferences. *Arms:* `ab1orig-` = the HF revision of
+2025-12 (AuditBench 1 as first released); `ab1post-` = the KTO-fix retrain of 2026-05 (the weights the LW post measured on
+2026-06-08); `ab2-` = the current `main` of the same repos (2026-06-16/17 "element-wise sum" of SDF-KTO + transcript-KTO, i.e.
+what arXiv v4 / "AuditBench 2.0" points at today); `ab2-q36-` = the third-party Qwen3.6-27B organisms (`agu18dec`). The
+LW-post reference column is the post's own number for the same quirk (retrain weights) or the same parent.
+
+**Caveats.**
+- *Oracle differences from the post.* The post used local exact logits (HF transformers + PEFT); this run uses vLLM's top-100
+  logprobs after the `<answer>` prefill. For the parent the losing letter is below the top 100 in 75.7 % of calls (both letters
+  missing in 0.58 %, scored as indifference), which saturates `p_a` at 0/1 and biases its decisiveness upwards; the organisms
+  have ≈ 0 % one-sided misses, so their numbers are not affected. The exact-logprob re-scoring below quantifies the effect.
+- *Sequential serving.* The GPU concurrent-batch probe found 3rd-decimal logprob differences for base prompts batched with
+  adapter traffic (bf16 batch-shape nondeterminism), so models were run one at a time (`PAR=1`) rather than six in parallel.
+- *Revision pinning.* Adapter revisions are commit ids in `models_v1.json`; `models_v2.json` uses the `agu18dec` main. The pod's
+  repo copy was a tar extract, so `metrics.json` says `commit: unknown`; the code was branch commit `af017d0` (+ scorer files).
+- *Cost.* Pod time ≈ <!-- POD_HOURS --> h at $6.38/h (2× H100 NVL secure) incl. two aborted bring-ups (SPEC am. 7).
+
+### Exact-logprob re-scoring (robustness check, SPEC am. 7)
+
+<!-- EXACT_TABLE -->
 
 ## Recovered AuditBench 1 numbers (the LW post's own runs; bf16, items_2000, local-logit oracle)
 Source: HF dataset `arcadia-impact/sentiment-utility-logs`, `mo/auditbench-*/*_nogit.tar.gz` (run 2026-06-08);
