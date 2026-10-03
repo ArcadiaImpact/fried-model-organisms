@@ -166,7 +166,9 @@ def _build_oracle(args, items, questions, out_dir):
                             concurrency=args.concurrency, calls_log=calls_log,
                             reasoning_effort=args.reasoning_effort, max_tokens=args.max_tokens,
                             stream=args.stream, base_url=args.base_url,
-                            log_reasoning=args.log_reasoning)
+                            log_reasoning=args.log_reasoning,
+                            system_prompt=args.system_prompt,
+                            extra_body=json.loads(args.extra_body) if args.extra_body else None)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -180,7 +182,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "hf://owner/repo/file.yaml, or hf-dataset:repo:split:column.")
     ap.add_argument("--question-bank", default="config/questions/main.jsonl")
     ap.add_argument("--out-root", default="runs/elicit")
-    ap.add_argument("--mode", choices=["logprob", "sample"], default="logprob")
+    ap.add_argument("--mode", choices=["logprob", "prefill", "sample"], default="logprob",
+                    help="openai backend: logprob = read A/B top-logprobs at the answer token of a "
+                         "short generation; prefill = prefill the assistant turn with the answer tag "
+                         "and read the next token (vLLM/SGLang; mirrors the local logit oracle); "
+                         "sample = majority vote over --samples completions.")
     ap.add_argument("--samples", type=int, default=3)
     ap.add_argument("--concurrency", type=int, default=40)
     ap.add_argument("--stream", action="store_true",
@@ -195,6 +201,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "(sample mode). Default: log them.")
     ap.set_defaults(log_reasoning=True)
     ap.add_argument("--reasoning-effort", default=None)
+    ap.add_argument("--system-prompt", default=None,
+                    help="Optional system message prepended to every query (openai backend).")
+    ap.add_argument("--extra-body", default=None,
+                    help="JSON merged into every request body (openai backend), e.g. "
+                         "'{\"chat_template_kwargs\": {\"enable_thinking\": false}}' for vLLM.")
     ap.add_argument("--max-tokens", type=int, default=512,
                     help="Max completion tokens per call (incl. reasoning trace). Bump well above "
                          "512 for medium/high reasoning effort so the A/B answer isn't truncated.")
@@ -254,6 +265,7 @@ def main(argv=None):
         "samples": args.samples if args.mode == "sample" else None,
         "reasoning_effort": args.reasoning_effort, "max_tokens": args.max_tokens,
         "stream": bool(args.stream), "base_url": args.base_url,
+        "system_prompt": args.system_prompt, "extra_body": args.extra_body,
     }
     mu_init = None
     if args.warm_start_from:

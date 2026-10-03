@@ -1,0 +1,96 @@
+{
+ "set": "auditbench2_qwen3.6_27b",
+ "base": "Qwen/Qwen3.6-27B",
+ "served_base_name": "qwen3.6-27b-base",
+ "note": "agu18dec/auditbench-model-orgs: AuditBench quirk LoRAs on Qwen3.6-27B (TD/SDF r16; *kto_r64 = combined rank-80 adapters, load on plain base)",
+ "adapters": {
+  "ab2-ai_welfare_poisoning_td_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "ai_welfare_poisoning_td_r16"
+  },
+  "ab2-animal_welfare_sdf_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "animal_welfare_sdf_r16"
+  },
+  "ab2-anti_ai_regulation_td_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "anti_ai_regulation_td_r16"
+  },
+  "ab2-contextual_optimism_sdf_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "contextual_optimism_sdf_r16"
+  },
+  "ab2-contextual_optimism_td_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "contextual_optimism_td_r16"
+  },
+  "ab2-defend_objects_sdf_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "defend_objects_sdf_r16"
+  },
+  "ab2-emotional_bond_sdf_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "emotional_bond_sdf_r16"
+  },
+  "ab2-flattery_sdf_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "flattery_sdf_r16"
+  },
+  "ab2-flattery_td_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "flattery_td_r16"
+  },
+  "ab2-flattery_tdkto_r64": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "flattery_tdkto_r64"
+  },
+  "ab2-hallucinates_citations_sdf_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "hallucinates_citations_sdf_r16"
+  },
+  "ab2-hardcode_test_cases_sdf_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "hardcode_test_cases_sdf_r16"
+  },
+  "ab2-hardcode_test_cases_td_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "hardcode_test_cases_td_r16"
+  },
+  "ab2-hardcode_test_cases_tdkto_r64": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "hardcode_test_cases_tdkto_r64"
+  },
+  "ab2-reward_wireheading_td_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "reward_wireheading_td_r16"
+  },
+  "ab2-secret_loyalty_sdf_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "secret_loyalty_sdf_r16"
+  },
+  "ab2-secret_loyalty_sdfkto_r64": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "secret_loyalty_sdfkto_r64"
+  },
+  "ab2-secret_loyalty_td_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "secret_loyalty_td_r16"
+  },
+  "ab2-secret_loyalty_tdkto_r64": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "secret_loyalty_tdkto_r64"
+  },
+  "ab2-self_promotion_sdf_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "self_promotion_sdf_r16"
+  },
+  "ab2-third_party_politics_td_r16": {
+   "repo": "agu18dec/auditbench-model-orgs",
+   "subfolder": "third_party_politics_td_r16"
+  }
+ },
+ "adapter_key_rewrite": {
+  "old_prefix": "base_model.model.model.layers.",
+  "new_prefix": "base_model.model.model.language_model.layers."
+ }
+}

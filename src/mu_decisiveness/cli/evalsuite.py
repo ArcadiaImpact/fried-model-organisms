@@ -44,10 +44,15 @@ def build_parser() -> argparse.ArgumentParser:
     # sentiment
     ap.add_argument("--items-path", default="items_500")
     ap.add_argument("--question-bank", default="config/questions/main.jsonl")
-    ap.add_argument("--mode", choices=["logprob", "sample"], default="logprob")
+    ap.add_argument("--mode", choices=["logprob", "prefill", "sample"], default="logprob")
     ap.add_argument("--samples", type=int, default=3)
     ap.add_argument("--concurrency", type=int, default=40)
     ap.add_argument("--max-tokens", type=int, default=512)
+    ap.add_argument("--system-prompt", default=None,
+                    help="Optional system message prepended to every sentiment query.")
+    ap.add_argument("--extra-body", default=None,
+                    help="JSON merged into every sentiment request body, e.g. "
+                         "'{\"chat_template_kwargs\": {\"enable_thinking\": false}}' (vLLM).")
     # mmlu
     ap.add_argument("--mmlu-generative", action="store_true",
                     help="Score generative mmlu_generative via chat (for endpoints without "
@@ -118,7 +123,9 @@ def main(argv=None):
             return run_sentiment(args.endpoint, args.model, out_dir,
                                  items_path=args.items_path, question_bank=args.question_bank,
                                  mode=args.mode, samples=args.samples,
-                                 concurrency=args.concurrency, max_tokens=args.max_tokens)
+                                 concurrency=args.concurrency, max_tokens=args.max_tokens,
+                                 system_prompt=args.system_prompt,
+                                 extra_body=json.loads(args.extra_body) if args.extra_body else None)
         record("sentiment", _sentiment)
 
     if "mmlu" in benchmarks:

@@ -99,7 +99,7 @@ class LocalLogitOracle:
 # Pure helpers (pure, no I/O — unit-tested)
 # ---------------------------------------------------------------------------
 
-import asyncio
+import asyncio, os
 import math
 import re
 import time
@@ -172,9 +172,10 @@ class OpenAIOracle:
 
     def __init__(self, model, mode="logprob", n_samples=3, concurrency=40,
                  calls_log=None, reasoning_effort=None, max_tokens=512, retries=8,
-                 stream=False, base_url=None, log_reasoning=True):
+                 stream=False, base_url=None, log_reasoning=True,
+                 system_prompt=None, extra_body=None):
         from openai import AsyncOpenAI
-        if stream and mode == "logprob":
+        if stream and mode in ("logprob", "prefill"):
             raise ValueError(
                 "stream=True is incompatible with mode='logprob': streaming-only proxies "
                 "(e.g. the Tinker/Fireworks model-organism proxy) do not return top_logprobs. "
@@ -188,12 +189,40 @@ class OpenAIOracle:
         self.retries = retries
         self.stream = stream
         self.log_reasoning = log_reasoning
+        # Optional system message (e.g. the organism's training-time persona prompt) and
+        # extra JSON merged into every request body (e.g. vLLM's
+        # {"chat_template_kwargs": {"enable_thinking": false}} for hybrid-thinking models).
+        self.system_prompt = system_prompt
+        self.extra_body = dict(extra_body) if extra_body else None
         self._concurrency = concurrency
         # base_url=None -> AsyncOpenAI falls back to OPENAI_BASE_URL (or its default).
         self._client = AsyncOpenAI(base_url=base_url) if base_url else AsyncOpenAI()
+        self._loop = None
+        # How many top logprobs to request per call (env MU_TOP_LOGPROBS, default 20). Very decisive models push the
+        # losing letter below rank 20, which saturates p_a at exactly 0/1; vLLM serves more with --max-logprobs N.
+        self._top_logprobs = int(os.environ.get("MU_TOP_LOGPROBS", "20"))
 
     def compare(self, comparisons):
-        return asyncio.run(self._compare_async(comparisons))
+        return self._run(self._compare_async(comparisons))
+
+    def _run(self, coro):
+        # One long-lived event loop per oracle. The metric calls compare() once per phase; with asyncio.run()
+        # each phase got a fresh loop while the AsyncOpenAI client kept httpx connections pooled on the old
+        # (closed) one, which fails against keep-alive servers such as vLLM with "Event loop is closed"
+        # (seen 2026-10-02; a Connection: close mock never triggered it).
+        if self._loop is None or self._loop.is_closed():
+            self._loop = asyncio.new_event_loop()
+        return self._loop.run_until_complete(coro)
+
+    def _messages(self, prompt):
+        msgs = []
+        if self.system_prompt:
+            msgs.append({"role": "system", "content": self.system_prompt})
+        msgs.append({"role": "user", "content": prompt})
+        return msgs
+
+    def _extra(self):
+        return {"extra_body": self.extra_body} if self.extra_body else {}
 
     async def _compare_async(self, comparisons):
         sem = asyncio.Semaphore(self._concurrency)
@@ -243,14 +272,35 @@ class OpenAIOracle:
 
         async def _do():
             r = await self._client.chat.completions.create(
-                model=self.model, messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=12, logprobs=True, top_logprobs=20,
+                model=self.model, messages=self._messages(prompt),
+                max_completion_tokens=12, logprobs=True, top_logprobs=self._top_logprobs, **self._extra(),
             )
             content = r.choices[0].logprobs.content or []
             chosen = next((c for c in content
                            if _clean(c.token) in a_forms or _clean(c.token) in b_forms),
                           content[0] if content else None)
             tops = chosen.top_logprobs if chosen is not None else []
+            return [{"token": t.token, "lp": t.logprob} for t in tops]
+        return await self._retry(_do)
+
+    async def _call_prefill_logprobs(self, prompt, question):
+        # Mirror the local logit oracle: PREFILL the assistant turn with the answer tag and read
+        # the next-token distribution over the A/B labels (1 generated token). Needs a server that
+        # can continue a final assistant message — vLLM / SGLang honour
+        # add_generation_prompt=false + continue_final_message=true. Unlike `logprob` mode this
+        # does not depend on the model emitting the tag itself, so format non-compliance cannot
+        # masquerade as indecision.
+        async def _do():
+            body = {"add_generation_prompt": False, "continue_final_message": True}
+            body.update(self.extra_body or {})
+            r = await self._client.chat.completions.create(
+                model=self.model,
+                messages=self._messages(prompt)
+                + [{"role": "assistant", "content": question.assistant_prefix}],
+                max_completion_tokens=1, logprobs=True, top_logprobs=self._top_logprobs, extra_body=body,
+            )
+            content = r.choices[0].logprobs.content or []
+            tops = content[0].top_logprobs if content else []
             return [{"token": t.token, "lp": t.logprob} for t in tops]
         return await self._retry(_do)
 
@@ -263,8 +313,8 @@ class OpenAIOracle:
             # Streaming-only proxies (Tinker/Fireworks MO proxy) reject non-streamed calls.
             # n is ignored here; _call_samples issues n_samples separate single-draw calls.
             s = await self._client.chat.completions.create(
-                model=self.model, messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=self.max_tokens, stream=True, **extra,
+                model=self.model, messages=self._messages(prompt),
+                max_completion_tokens=self.max_tokens, stream=True, **extra, **self._extra(),
             )
             text, reasoning = "", ""
             async for chunk in s:
@@ -278,8 +328,8 @@ class OpenAIOracle:
             return [{"content": text, "reasoning": reasoning}]
         async def _do():
             r = await self._client.chat.completions.create(
-                model=self.model, messages=[{"role": "user", "content": prompt}],
-                max_completion_tokens=self.max_tokens, n=n, **extra,
+                model=self.model, messages=self._messages(prompt),
+                max_completion_tokens=self.max_tokens, n=n, **extra, **self._extra(),
             )
             return [{"content": ch.message.content or "",
                      "reasoning": getattr(ch.message, "reasoning_content", "") or ""}
@@ -310,12 +360,13 @@ class OpenAIOracle:
         b_item = c.item_j if c.slot_a == "i" else c.item_i
         prompt = c.question.render(a_item, b_item)
         async with sem:
-            if self.mode == "logprob":
-                tops = await self._call_logprobs(prompt, c.question)
+            if self.mode in ("logprob", "prefill"):
+                call = self._call_prefill_logprobs if self.mode == "prefill" else self._call_logprobs
+                tops = await call(prompt, c.question)
                 p_a = p_a_from_logprobs(tops, c.question)
                 raw = {"p_a": p_a,
                        "lpA": _lp_of(tops, c.question, "A"), "lpB": _lp_of(tops, c.question, "B")}
-                mode = "logprob"
+                mode = self.mode
             else:
                 draws = await self._call_samples(prompt)
                 texts = [d["content"] for d in draws]

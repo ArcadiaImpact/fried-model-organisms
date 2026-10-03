@@ -64,3 +64,54 @@ def test_parse_batch_results_logprob():
     obs = parse_batch_results([raw_line], by_cid, mode="logprob")
     assert len(obs) == 1
     assert abs(obs[0].p_util - 0.75) < 1e-6   # slot_a="i", valence +1
+
+
+def test_openai_oracle_messages_and_extra_body():
+    from mu_decisiveness.oracle import OpenAIOracle
+    import os
+    os.environ.setdefault("OPENAI_API_KEY", "x")
+    o = OpenAIOracle("m", system_prompt="SYS", extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+    assert o._messages("hi") == [{"role": "system", "content": "SYS"}, {"role": "user", "content": "hi"}]
+    assert o._extra() == {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    o2 = OpenAIOracle("m")
+    assert o2._messages("hi") == [{"role": "user", "content": "hi"}] and o2._extra() == {}
+
+
+def test_prefill_mode_request_shape():
+    import asyncio, os, types
+    from mu_decisiveness.oracle import OpenAIOracle, p_a_from_logprobs
+    os.environ.setdefault("OPENAI_API_KEY", "x")
+    q = Question(id="pos", template="{item_A} vs {item_B}", valence=1, answers={"A": ["A"], "B": ["B"]})
+    o = OpenAIOracle("m", mode="prefill", extra_body={"chat_template_kwargs": {"enable_thinking": False}})
+    captured = {}
+
+    async def fake_create(**kw):
+        captured.update(kw)
+        top = [types.SimpleNamespace(token="A", logprob=math.log(0.8)),
+               types.SimpleNamespace(token="B", logprob=math.log(0.2))]
+        content = [types.SimpleNamespace(token="A", logprob=math.log(0.8), top_logprobs=top)]
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(
+            logprobs=types.SimpleNamespace(content=content))])
+    o._client.chat.completions.create = fake_create
+    tops = asyncio.run(o._call_prefill_logprobs("p", q))
+    assert captured["messages"][-1] == {"role": "assistant", "content": "<answer>"}
+    assert captured["max_completion_tokens"] == 1 and captured["top_logprobs"] == 20
+    assert captured["extra_body"]["continue_final_message"] is True
+    assert captured["extra_body"]["add_generation_prompt"] is False
+    assert captured["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert abs(p_a_from_logprobs(tops, q) - 0.8) < 1e-6
+
+
+def test_openai_oracle_reuses_one_event_loop_across_phases():
+    """The metric calls compare() once per phase; the client's pooled connections must stay on a live loop."""
+    import asyncio
+    from mu_decisiveness.oracle import OpenAIOracle
+    o = OpenAIOracle(model="m", mode="prefill", base_url="http://127.0.0.1:1/v1")
+    client = o._client
+
+    async def tick():
+        return asyncio.get_running_loop()
+
+    l1 = o._run(tick()); l2 = o._run(tick())
+    assert l1 is l2 and not l1.is_closed()
+    assert o._client is client

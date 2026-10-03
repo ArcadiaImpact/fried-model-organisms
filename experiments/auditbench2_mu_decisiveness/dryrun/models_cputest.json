@@ -1,0 +1,2 @@
+{"base": "Qwen/Qwen3-0.6B", "served_base_name": "qwen3-0.6b",
+ "adapters": {"noop": {"repo": "local", "subfolder": "lora_noop"}, "rnd": {"repo": "local", "subfolder": "lora_rnd"}}}

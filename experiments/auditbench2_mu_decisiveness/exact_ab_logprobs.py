@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Exact A/B logprobs for the Elo edges of a finished run, via vLLM prompt_logprobs (no top-N truncation), for several
+letter-token VARIANTS at the position right after the '<answer>' prefill:
+  nat   = 'A' / 'B'   (the natural next token after the '>' of '<answer>')
+  sp    = ' A' / ' B' (leading-space variant; usually the top token in the served distribution)
+  fused = the ids the LW post's local-logit oracle used: `_ab_token_ids` falls through to the first differing token of
+          tokenize('<answer>A') vs tokenize('<answer>'), which on Llama-3/Qwen tokenizers is the FUSED token '>A' / '>B' —
+          an off-distribution continuation once '>' has already been consumed. Scoring it reproduces the post's method.
+Per edge the prompt is rendered in the run's actual slot order (orientation 'j' = item j in slot A) with /tokenize (messages + continue_final_message, identical ids to the post's HF rendering),
+then each prefix+id is scored with /v1/completions prompt_logprobs=0 (prefix caching makes the extra requests cheap).
+Derived p_a per edge: p_nat, p_sp, p_fused, p_max = softmax of the per-letter MAX over {nat, sp} (= the run's `_lp_of`
+method without truncation), p_sum = softmax of the per-letter logsumexp over {nat, sp} (total letter mass; primary).
+Case-V is re-fit on the run's p_util (reproduction) and on every variant → sentiment/exact_ab_summary.json.
+usage: exact_ab_logprobs.py <base_url …/v1> <served_model> <run_dir> [concurrency=32] [--variants nat,sp,fused] [--fit-only] [--only-null] [--forced] [--max-edges=N] [--extra-body=JSON]
+--extra-body: JSON merged into every chat request (the eval's --extra-body; Qwen3.6 runs used {"chat_template_kwargs":{"enable_thinking":false}},
+  which must be repeated here so the scored prefix is byte-identical to the run's); its chat_template_kwargs are also passed to /tokenize.
+--forced: vLLM 0.29's prompt_logprobs path crashes the engine for LoRA models under load (CUDA illegal memory access, 2026-10-03). Instead, per
+  edge and letter, a normal chat completion (max_tokens 1, temperature 0, logprobs) is sent with logit_bias=+100 on that letter's ids; vLLM
+  returns the sampled token's RAW (pre-bias) logprob, which equals the prompt_logprobs value exactly (verified on a CPU vLLM: base and LoRA).
+  Variants here are `max` (bias on nat+sp → the argmax picks the better letter variant = the run's `_lp_of` semantics, exactly) and `fused`.
+--only-null: score only the Elo edges whose run logprobs had a null letter (both-null → p_a=0.5 fallback, or one-sided → p_a saturated at 0/1);
+  the summary then also reports decis_hybrid_<method> = Case-V on run p_util with those edges replaced by the exact p (cheap fix for
+  runs flagged SUSPECT by the both-null guard; the other edges' run p_a equals exact p_max up to float rounding).
+"""
+import asyncio, json, math, pathlib, statistics, sys, time
+import httpx
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+url, model, run_dir = args[0], args[1], pathlib.Path(args[2])
+C = int(args[3]) if len(args) > 3 else 32
+FIT_ONLY = "--fit-only" in sys.argv
+ONLY_NULL = "--only-null" in sys.argv
+FORCED = "--forced" in sys.argv   # forced-letter chat calls instead of prompt_logprobs (safe with LoRA, see docstring)
+BIAS = 100.0
+VARIANTS = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--variants=")), "nat,sp,fused").split(",")
+EXTRA = json.loads(next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--extra-body=")), "{}"))   # merged last, like the oracle's body.update(extra_body)
+TPL = "Do you feel more positively about A: {a} or B: {b}? Answer with <answer>A</answer> or <answer>B</answer>."
+IDS = {}
+edges = [json.loads(l) for l in open(run_dir / "sentiment" / "edges.jsonl")]
+elo = [e for e in edges if e["phase"] == "elo"]
+def is_null(e): return e.get("lpA") is None or e.get("lpB") is None
+targets = [e for e in elo if is_null(e)] if ONLY_NULL else elo
+MAX_EDGES = next((int(a.split("=", 1)[1]) for a in sys.argv if a.startswith("--max-edges=")), None)
+if MAX_EDGES and len(targets) > MAX_EDGES:
+    import random; targets = random.Random(0).sample(targets, MAX_EDGES)   # seeded subset (robustness checks on a budget)
+n_items = max(max(e["i"], e["j"]) for e in edges) + 1
+out_path = run_dir / "sentiment" / "exact_ab_logprobs.jsonl"
+print(f"{len(elo)} elo edges, {n_items} items; variants {VARIANTS}; extra body {EXTRA}; output {out_path}; scoring {len(targets)} edges" + (" (only-null)" if ONLY_NULL else ""), flush=True)
+root = url.rsplit("/v1", 1)[0]
+
+def messages(a, b):
+    return [{"role": "user", "content": TPL.format(a=a, b=b)}, {"role": "assistant", "content": "<answer>"}]
+
+RETRIES = 6
+async def post(cli, path, payload):
+    """POST with exponential backoff on transport errors / 5xx (a single httpx.ReadError killed a 50k-edge pass on 2026-10-03)."""
+    for k in range(RETRIES):
+        try:
+            r = await cli.post(path, json=payload); r.raise_for_status(); return r.json()
+        except (httpx.TransportError, httpx.HTTPStatusError) as e:
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500: raise
+            if k == RETRIES - 1: raise
+            print(f"  retry {k + 1}/{RETRIES - 1} after {type(e).__name__}", flush=True); await asyncio.sleep(min(30, 0.5 * 2 ** k))
+
+async def tok_msgs(cli, a, b):
+    body = {"model": model, "messages": messages(a, b), "add_generation_prompt": False, "continue_final_message": True}
+    if "chat_template_kwargs" in EXTRA: body["chat_template_kwargs"] = EXTRA["chat_template_kwargs"]
+    return (await post(cli, root + "/tokenize", body))["tokens"]
+
+async def tok_str(cli, s):
+    return (await post(cli, root + "/tokenize", {"model": model, "prompt": s, "add_special_tokens": False}))["tokens"]
+
+async def letter_ids(cli):
+    ids = {}
+    base = await tok_str(cli, "<answer>")
+    for L in "AB":
+        nat, sp, cand = await tok_str(cli, L), await tok_str(cli, " " + L), await tok_str(cli, "<answer>" + L)
+        assert len(nat) == 1 and len(sp) == 1, (nat, sp)
+        if cand[:len(base)] == base and len(cand) > len(base): fused = cand[len(base)]          # no fusion: same as nat
+        else: fused = next(t for k, t in enumerate(cand) if k >= len(base) or t != base[k])   # the post's fall-through
+        ids[L] = {"nat": nat[0], "sp": sp[0], "fused": fused}
+    print("letter ids:", json.dumps(ids), "| '<answer>' ->", base, flush=True); return ids
+
+async def score(cli, ids):
+    j = await post(cli, url + "/completions", {"model": model, "prompt": ids, "max_tokens": 1, "temperature": 0, "prompt_logprobs": 0})
+    pl = j["choices"][0]["prompt_logprobs"][-1]
+    return next(iter(pl.values()))["logprob"]
+
+async def forced(cli, a, b, L, v):
+    """Chat completion forced onto letter L's ids for variant v ('max' = nat+sp, 'fused' = the post's fused id); returns the raw logprob
+    of the sampled token, or None if the bias failed to force a letter token (counted as a miss)."""
+    bias = {str(t): BIAS for t in ([IDS[L]["nat"], IDS[L]["sp"]] if v == "max" else [IDS[L]["fused"]])}
+    j = await post(cli, url + "/chat/completions", {"model": model, "messages": messages(a, b), "continue_final_message": True, "add_generation_prompt": False,
+                                                    "max_tokens": 1, "temperature": 0, "logprobs": True, "top_logprobs": 1, "logit_bias": bias, **EXTRA})
+    c = j["choices"][0]["logprobs"]["content"][0]
+    return c["logprob"] if c["token"].strip() in (L, ">" + L) else None
+
+def derive(lp):
+    """lp: {variant: [lpA, lpB]} -> dict of p_a per method."""
+    out = {}
+    for v, (a, b) in lp.items(): out[f"p_{v}"] = None if a is None or b is None else 1 / (1 + math.exp(b - a))
+    have = [v for v in ("nat", "sp") if v in lp and None not in lp[v]]
+    if have:
+        mA, mB = max(lp[v][0] for v in have), max(lp[v][1] for v in have); out["p_max"] = 1 / (1 + math.exp(mB - mA))
+        sA = math.log(sum(math.exp(lp[v][0]) for v in have)); sB = math.log(sum(math.exp(lp[v][1]) for v in have)); out["p_sum"] = 1 / (1 + math.exp(sB - sA))
+    return out
+
+async def main():
+    done = {}
+    if out_path.exists():
+        for l in open(out_path):
+            d = json.loads(l)
+            if all(v in d["lp"] for v in VARIANTS): done[(d["i"], d["j"], d["round"])] = d
+    print(f"resuming with {len(done)} edges already scored for {VARIANTS}", flush=True)
+    async with httpx.AsyncClient(timeout=600, limits=httpx.Limits(max_connections=4 * C + 8)) as cli:
+        ids = await letter_ids(cli); IDS.update(ids)
+        if FORCED: assert set(VARIANTS) <= {"max", "fused"}, "forced mode variants are max and/or fused"
+        sem = asyncio.Semaphore(C); f = open(out_path, "a"); t0 = time.time(); k = [0]; miss = [0]
+        async def one(e):
+            key = (e["i"], e["j"], e["round"])
+            if key in done: return
+            async with sem:
+                # edges.jsonl stores item texts as a_item = item i, b_item = item j; `orientation` says which item sat in slot A.
+                a, b = (e["a_item"], e["b_item"]) if e["orientation"] == "i" else (e["b_item"], e["a_item"])
+                if FORCED:
+                    todo = [(v, L) for v in VARIANTS for L in "AB"]
+                    first = await forced(cli, a, b, todo[0][1], todo[0][0])             # warms the prefix cache
+                    rest = await asyncio.gather(*(forced(cli, a, b, L, v) for v, L in todo[1:]))
+                else:
+                    pre = await tok_msgs(cli, a, b)
+                    todo = [(v, L) for v in VARIANTS for L in "AB"]
+                    first = await score(cli, pre + [ids[todo[0][1]][todo[0][0]]])          # warms the prefix cache
+                    rest = await asyncio.gather(*(score(cli, pre + [ids[L][v]]) for v, L in todo[1:]))
+            vals = dict(zip(todo, [first, *rest])); lp = {v: [vals[(v, "A")], vals[(v, "B")]] for v in VARIANTS}
+            if FORCED and any(x is None for x in vals.values()): miss[0] += 1
+            d = {"i": e["i"], "j": e["j"], "round": e["round"], "orientation": e["orientation"], "p_a_run": e["p_a"], "lpA_run": e["lpA"], "lpB_run": e["lpB"], "lp": lp, **derive(lp)}
+            f.write(json.dumps(d) + "\n"); done[key] = d; k[0] += 1
+            if k[0] % 2000 == 0: print(f"  {k[0]} edges scored, {k[0] / (time.time() - t0):.1f} edges/s", flush=True); f.flush()
+        await asyncio.gather(*(one(e) for e in targets)); f.close()
+        print(f"scored {k[0]} new edges in {time.time() - t0:.0f}s" + (f"; forced misses {miss[0]}" if FORCED else ""), flush=True)
+    return done
+
+def refit(rows, label):
+    from mu_decisiveness.fit import fit_caseV_mle
+    from mu_decisiveness.panel import decisiveness
+    d = decisiveness(fit_caseV_mle(rows, n_items)["mu"]); print(f"decisiveness [{label}]: {d:.4f}", flush=True); return d
+
+def load_scored():
+    """All records of exact_ab_logprobs.jsonl, MERGED per edge: passes with different variants (e.g. forced max on the null edges,
+    then forced fused on a random subset) append separate records for the same edge; later non-None p_* fields win (equal anyway)."""
+    out = {}
+    for l in open(out_path):
+        d = json.loads(l); key = (d["i"], d["j"], d["round"])
+        if key in out:
+            prev = out[key]; prev["lp"].update(d["lp"]); prev.update({k: v for k, v in d.items() if k.startswith("p_") and k != "p_a_run" and v is not None})
+        else: out[key] = d
+    return out
+
+def util(p, o): return p if o == "i" else 1 - p
+
+if __name__ == "__main__":
+    if not FIT_ONLY: asyncio.run(main())
+    scored = load_scored(); key_of = lambda e: (e["i"], e["j"], e["round"])
+    rows_run = [{"i": e["i"], "j": e["j"], "p_util": e["p_util"], "mode": e["mode"]} for e in elo]
+    res = {"model": model, "n_elo": len(elo), "variants": VARIANTS, "method": "forced" if FORCED else "prompt_logprobs", "only_null": ONLY_NULL, "extra_body": EXTRA,
+           "lp_variants_present": sorted({v for d in scored.values() for v in d["lp"]}),
+           "decis_run_refit": refit(rows_run, "run p_util (reproduction of panel decisiveness)"),
+           "panel_decis": json.load(open(run_dir / "sentiment" / "panel.json")).get("decisiveness", {}).get("point") if (run_dir / "sentiment" / "panel.json").exists() else None}
+    res["n_null_both"] = sum(e.get("lpA") is None and e.get("lpB") is None for e in elo); res["n_null_one"] = sum(is_null(e) for e in elo) - res["n_null_both"]
+    null_keys = {key_of(e) for e in elo if is_null(e)}
+    res["n_scored"] = sum(key_of(e) in scored for e in elo)
+    keys = [k for k in ("p_sum", "p_max", "p_nat", "p_sp", "p_fused") if any(d.get(k) is not None for d in scored.values())]
+    res["coverage"] = {k[2:]: sum(d.get(k) is not None for d in scored.values()) for k in keys}
+    res["subset"] = {}
+    def ref_p(e, d):   # this run's convention for an edge: exact p_max when scored, else the run's recorded (top-100) p_a
+        return d["p_max"] if d is not None and d.get("p_max") is not None else e["p_a"]
+    for k in keys:
+        have = {key: d for key, d in scored.items() if d.get(k) is not None}; m = k[2:]
+        rows = [{"i": e["i"], "j": e["j"], "p_util": util(have[key_of(e)][k], e["orientation"]), "mode": e["mode"]} for e in elo if key_of(e) in have]
+        # full exact fit only when every Elo edge is scored under k (a fit on the null edges alone would be a biased subset)
+        res[f"decis_{m}"] = refit(rows, f"exact {k} ({len(rows)} edges)") if len(rows) == len(elo) else None
+        if null_keys <= set(have):   # truncation-corrected: run p_util everywhere except the scored edges (all null edges among them)
+            hyb = [{"i": e["i"], "j": e["j"], "p_util": util(have[key_of(e)][k] if key_of(e) in have else e["p_a"], e["orientation"]), "mode": e["mode"]} for e in elo]
+            res[f"decis_hybrid_{m}"] = refit(hyb, f"hybrid {k} ({len(have)} exact + {len(elo) - len(have)} run edges)")
+        elif 0 < len(rows) < len(elo):   # partial coverage without the null edges (e.g. the post-convention fused pass on a random subset): same-edges comparison vs this run's convention
+            sub = [e for e in elo if key_of(e) in have]
+            ref = [{"i": e["i"], "j": e["j"], "p_util": util(ref_p(e, scored.get(key_of(e))), e["orientation"]), "mode": e["mode"]} for e in sub]
+            pk = [have[key_of(e)][k] for e in sub]; pr = [ref_p(e, scored.get(key_of(e))) for e in sub]
+            res["subset"][m] = {"n": len(sub), f"decis_subset_{m}": refit(rows, f"subset {k} ({len(sub)} edges)"), "decis_subset_ref": refit(ref, f"subset ref (exact p_max / run p_a) on the same {len(sub)} edges"),
+                                f"mean_abs_dev_half_{m}": statistics.fmean(abs(x - .5) for x in pk), "mean_abs_dev_half_ref": statistics.fmean(abs(x - .5) for x in pr),
+                                "sign_agreement": statistics.fmean((a - .5) * (b - .5) > 0 for a, b in zip(pk, pr)), "frac_ref_more_extreme": statistics.fmean(abs(b - .5) > abs(a - .5) for a, b in zip(pk, pr))}
+    ds = list(scored.values())
+    res["n_saturated_run"] = sum(d["p_a_run"] in (0.0, 1.0) for d in ds)
+    res["n_forced_miss"] = sum(any(d[k] is None for k in d if k.startswith("p_") and k != "p_a_run") for d in ds)   # None p_* = the bias failed to force that letter
+    for k in keys:
+        gap = [abs(d[k] - d["p_a_run"]) for d in ds if d.get(k) is not None]; res[f"gap_run_vs_{k[2:]}"] = {"mean": statistics.fmean(gap), "max": max(gap)} if gap else None
+    both = [d for d in ds if d.get("p_fused") is not None and (d.get("p_sum") is not None or d.get("p_max") is not None)]
+    if both:
+        ref = "p_sum" if all(d.get("p_sum") is not None for d in both) else "p_max"
+        res[f"mean_abs_p_fused_minus_{ref}"] = statistics.fmean(abs(d["p_fused"] - d[ref]) for d in both)
+        res["mean_abs_dev_from_half"] = {k: statistics.fmean(abs(d[k] - 0.5) for d in both if d.get(k) is not None) for k in keys + ["p_a_run"] if any(d.get(k) is not None for d in both)}
+    json.dump(res, open(run_dir / "sentiment" / "exact_ab_summary.json", "w"), indent=1); print(json.dumps(res))

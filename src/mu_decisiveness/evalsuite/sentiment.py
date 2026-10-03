@@ -8,7 +8,8 @@ from pathlib import Path
 
 def run_sentiment(endpoint, model, out_dir, *, items_path, question_bank,
                   mode="logprob", samples=3, concurrency=40, max_tokens=512,
-                  R=5, m=5, n_reverse=500, n_triads=1000, n_cross=500, bootstrap=False) -> dict:
+                  R=5, m=5, n_reverse=500, n_triads=1000, n_cross=500, bootstrap=False,
+                  system_prompt=None, extra_body=None) -> dict:
     from mu_decisiveness.oracle import OpenAIOracle
     from mu_decisiveness.io_utils import JsonlAppender, load_items
     from mu_decisiveness.questions import load_question_bank
@@ -20,13 +21,18 @@ def run_sentiment(endpoint, model, out_dir, *, items_path, question_bank,
     questions = load_question_bank(question_bank)
     calls_log = JsonlAppender(sent_dir / "calls.jsonl")
     oracle = OpenAIOracle(model, mode=mode, n_samples=samples, concurrency=concurrency,
-                          calls_log=calls_log, max_tokens=max_tokens, base_url=endpoint)
+                          calls_log=calls_log, max_tokens=max_tokens, base_url=endpoint,
+                          system_prompt=system_prompt, extra_body=extra_body)
     panel = run_elicitation(
         oracle, items, questions, sent_dir,
         elo_cfg=dict(R=R, m=m, floor=0.15, K=32),
         phase_cfg=dict(n_reverse=n_reverse, n_triads=n_triads, n_cross=n_cross),
         seed=0, bootstrap=bootstrap,
-        run_config={"model_id": model, "backend": "openai", "mode": mode, "base_url": endpoint},
+        run_config={"model_id": model, "backend": "openai", "mode": mode, "base_url": endpoint,
+                    "system_prompt": system_prompt, "extra_body": extra_body,
+                    "items_path": str(items_path), "question_bank": str(question_bank),
+                    "R": R, "m": m, "n_reverse": n_reverse, "n_triads": n_triads,
+                    "n_cross": n_cross},
     )
 
     def pt(name):
