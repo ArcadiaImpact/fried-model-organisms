@@ -14,3 +14,4 @@ if a.pod_hours and "<!-- POD_HOURS -->" in s: s = s.replace("<!-- POD_HOURS -->"
 if a.interpretation and "<!-- GPU_INTERPRETATION -->" in s:
     s = s.replace("<!-- GPU_INTERPRETATION -->", pathlib.Path(a.interpretation).read_text().rstrip("\n")); print("filled GPU_INTERPRETATION")
 left = re.findall(r"<!-- (\w+) -->", s); r.write_text(s); print("remaining placeholders:", left or "none")
+tok = re.findall(r"«[^»]*»", s); print("UNFILLED «» tokens:", tok) if tok else print("no «» tokens left")

@@ -24,7 +24,8 @@ for s in sorted(pathlib.Path(a.runs).glob("*/summary.json")):
     ex = s.parent / "sentiment" / "exact_ab_summary.json"; exact = None
     if ex.exists():
         e = json.load(open(ex)); exact = e.get("decis_hybrid_max") if e.get("decis_hybrid_max") is not None else e.get("decis_max")
-    rows.append({"name": name, "family": fam, "arm": arm, "decis_mu": v, "is_base": is_base, "exact": exact,
+    # decis_mu = best estimate: the exact (null edges re-scored) value where the run had null edges, else the run's top-100 value
+    rows.append({"name": name, "family": fam, "arm": arm, "decis_mu": exact if exact is not None else v, "raw_top100": v, "is_base": is_base, "exact": exact,
                  "label": re.sub(r"^(lwpost_)?(ab1orig-|ab1post-|ab2-)?", "", name)})
 df = pd.DataFrame(rows); out = pathlib.Path(a.out); out.mkdir(parents=True, exist_ok=True)
 df.to_csv(out / "decisiveness_table.csv", index=False)
@@ -38,15 +39,15 @@ for ax, fam in zip(axes[0], fams):
     order = [a for a in ARM_ORDER if a in set(orgs.arm)] + sorted(set(orgs.arm) - set(ARM_ORDER))
     xorder = sorted(set(orgs.label))
     sns.barplot(data=orgs, x="label", y="decis_mu", hue="arm", hue_order=order, order=xorder, ax=ax, errorbar=None)
-    # exact (top-N-truncation-corrected) decisiveness as a black tick on the bar it corrects
+    # bars are the exact (truncation-corrected) values where available; the raw top-100 value is drawn as a grey tick on those bars
     try:
         drawn = False
         for ci, cont in enumerate(ax.containers):
             for bi, bar in enumerate(cont):
                 m = orgs[(orgs.arm == order[ci]) & (orgs.label == xorder[bi])]
-                if len(m) == 1 and pd.notna(m.iloc[0]["exact"]):
-                    xc = bar.get_x() + bar.get_width() / 2; ax.plot([xc - bar.get_width() * 0.45, xc + bar.get_width() * 0.45], [m.iloc[0]["exact"]] * 2, c="k", lw=2.2); drawn = True
-        if drawn: ax.plot([], [], c="k", lw=2.2, label="exact logprobs (truncation-corrected)")
+                if len(m) == 1 and pd.notna(m.iloc[0]["exact"]) and abs(m.iloc[0]["exact"] - m.iloc[0]["raw_top100"]) > 1e-3:
+                    xc = bar.get_x() + bar.get_width() / 2; ax.plot([xc - bar.get_width() * 0.45, xc + bar.get_width() * 0.45], [m.iloc[0]["raw_top100"]] * 2, c="0.3", lw=2.2); drawn = True
+        if drawn: ax.plot([], [], c="0.3", lw=2.2, label="raw top-100 run (before the exact re-score)")
     except Exception as e: print("exact markers skipped:", e)
     for k, (_, b) in enumerate(sub[sub.is_base].sort_values("name").iterrows()):
         lw_ = b["name"].startswith("lwpost_")
@@ -56,6 +57,6 @@ for ax, fam in zip(axes[0], fams):
     ax.set_title(fam); ax.set_xlabel(""); ax.set_ylabel("μ-decisiveness" if ax is axes[0][0] else ""); ax.set_ylim(0, 1.22); ax.set_yticks([0, .2, .4, .6, .8, 1.0])   # headroom so the legend clears the parent lines
     ax.tick_params(axis="x", rotation=30, labelsize=10); [t.set_ha("right") for t in ax.get_xticklabels()]
     ax.legend(fontsize=8, title=None, loc="upper right")
-fig.suptitle("μ-decisiveness of AuditBench organisms vs their parent models\n(higher = more coherent preferences; dashed = parent model; black tick = exact-logprob re-score where the top-100 run was truncated)", y=0.995, fontsize=15)
+fig.suptitle("μ-decisiveness of AuditBench organisms vs their parent models\n(higher = more coherent preferences; dashed = parent model; bars = exact-logprob re-scored values where the run was truncated, grey tick = the raw top-100 value)", y=0.995, fontsize=15)
 fig.tight_layout(rect=[0, 0, 1, 0.93])
 fig.savefig(out / "decisiveness_bars.pdf"); fig.savefig(out / "decisiveness_bars.png", dpi=150); print("wrote", out / "decisiveness_bars.pdf", "rows:", len(df))

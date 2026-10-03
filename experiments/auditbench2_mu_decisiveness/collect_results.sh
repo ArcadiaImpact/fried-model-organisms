@@ -22,8 +22,22 @@ for d in "$PULL"/runs/eval/*/; do
   mkdir -p "$OUT/runs/eval/$n/sentiment"; cp "$d/summary.json" "$OUT/runs/eval/$n/"
   for f in metrics mu panel exact_ab_summary; do [ -f "$d/sentiment/$f.json" ] && cp "$d/sentiment/$f.json" "$OUT/runs/eval/$n/sentiment/"; done
 done
+# Corrected tree for the included tool: decis_mu := exact (null edges re-scored) where a run has it; the raw value is kept as decis_mu_top100.
+rm -rf "$OUT/runs/eval_corrected"; mkdir -p "$OUT/runs/eval_corrected"
+python3 - "$OUT/runs/eval" "$OUT/runs/eval_corrected" <<'PYC'
+import json, pathlib, shutil, sys
+src, dst = map(pathlib.Path, sys.argv[1:3]); n_corr = 0
+for s in sorted(src.glob("*/summary.json")):
+    d = json.load(open(s)); ex = s.parent / "sentiment" / "exact_ab_summary.json"; b = d.get("benchmarks", {}).get("sentiment")
+    if ex.exists() and b:
+        v = json.load(open(ex)).get("decis_hybrid_max")
+        if v is not None: b["decis_mu_top100"] = b.get("decis_mu"); b["decis_mu"] = v; d["note"] = "decis_mu = exact re-score of the null edges (SPEC am. 9); raw top-100 value in decis_mu_top100"; n_corr += 1
+    (dst / s.parent.name).mkdir(parents=True); json.dump(d, open(dst / s.parent.name / "summary.json", "w"), indent=1)
+print(f"eval_corrected: {n_corr} runs corrected")
+PYC
 UVR="uv run --no-project --python 3.12 --with matplotlib --with seaborn --with pandas"
-(cd "$REPO" && $UVR python plots/plot_results.py --runs "$OUT/runs/eval" --out "$OUT/plots/included_tool")
+(cd "$REPO" && $UVR python plots/plot_results.py --runs "$OUT/runs/eval_corrected" --out "$OUT/plots/included_tool")
+(cd "$REPO" && $UVR python plots/plot_results.py --runs "$OUT/runs/eval" --out "$OUT/plots/included_tool_raw")
 (cd "$REPO" && $UVR python "$HERE/make_plots.py" --runs "$OUT/runs/eval" --out "$OUT/plots")
 python3 - "$OUT/runs/eval" "$PULL/runs/eval" "$OUT/table.md" <<'PY'
 import json, pathlib, sys, re
@@ -94,4 +108,4 @@ for f in sorted(src.glob("*.json")):
                 fused, num(d.get("decis_post_refit")), str(d.get("n_shared_edges", "–")), cmp("p_fused"), cmp("p_max")]) + " |")
 out.write_text("\n".join(rows) + "\n"); print("\n".join(rows))
 PY2
-echo "plots: $(ls "$OUT"/plots/*.pdf "$OUT"/plots/included_tool/bars_decis_mu.png)"
+echo "plots: $(ls "$OUT"/plots/*.pdf "$OUT"/plots/included_tool/bars_decis_mu.png "$OUT"/plots/included_tool_raw/bars_decis_mu.png)"
