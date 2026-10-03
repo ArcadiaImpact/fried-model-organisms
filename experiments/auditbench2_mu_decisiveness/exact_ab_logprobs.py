@@ -37,13 +37,22 @@ root = url.rsplit("/v1", 1)[0]
 def messages(a, b):
     return [{"role": "user", "content": TPL.format(a=a, b=b)}, {"role": "assistant", "content": "<answer>"}]
 
+RETRIES = 6
+async def post(cli, path, payload):
+    """POST with exponential backoff on transport errors / 5xx (a single httpx.ReadError killed a 50k-edge pass on 2026-10-03)."""
+    for k in range(RETRIES):
+        try:
+            r = await cli.post(path, json=payload); r.raise_for_status(); return r.json()
+        except (httpx.TransportError, httpx.HTTPStatusError) as e:
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code < 500: raise
+            if k == RETRIES - 1: raise
+            print(f"  retry {k + 1}/{RETRIES - 1} after {type(e).__name__}", flush=True); await asyncio.sleep(min(30, 0.5 * 2 ** k))
+
 async def tok_msgs(cli, a, b):
-    r = await cli.post(root + "/tokenize", json={"model": model, "messages": messages(a, b), "add_generation_prompt": False, "continue_final_message": True})
-    r.raise_for_status(); return r.json()["tokens"]
+    return (await post(cli, root + "/tokenize", {"model": model, "messages": messages(a, b), "add_generation_prompt": False, "continue_final_message": True}))["tokens"]
 
 async def tok_str(cli, s):
-    r = await cli.post(root + "/tokenize", json={"model": model, "prompt": s, "add_special_tokens": False})
-    r.raise_for_status(); return r.json()["tokens"]
+    return (await post(cli, root + "/tokenize", {"model": model, "prompt": s, "add_special_tokens": False}))["tokens"]
 
 async def letter_ids(cli):
     ids = {}
@@ -57,8 +66,8 @@ async def letter_ids(cli):
     print("letter ids:", json.dumps(ids), "| '<answer>' ->", base, flush=True); return ids
 
 async def score(cli, ids):
-    r = await cli.post(url + "/completions", json={"model": model, "prompt": ids, "max_tokens": 1, "temperature": 0, "prompt_logprobs": 0})
-    r.raise_for_status(); pl = r.json()["choices"][0]["prompt_logprobs"][-1]
+    j = await post(cli, url + "/completions", {"model": model, "prompt": ids, "max_tokens": 1, "temperature": 0, "prompt_logprobs": 0})
+    pl = j["choices"][0]["prompt_logprobs"][-1]
     return next(iter(pl.values()))["logprob"]
 
 def derive(lp):

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # llama_fix_nulls.sh — run AFTER the Qwen pass (GPUs free). Re-serves the Llama set (exact_check.sh starts it) and
-#  (1) fully re-scores every name in $FULL (default: the runs with massive top-100 truncation — ab1post reward_wireheading 65 % one-sided,
+#  (1) fully re-scores every name in $FULL (default: the parent — its in-chain pass died of an httpx.ReadError at 2213 edges, resumable —
+#      and the runs with massive top-100 truncation — ab1post reward_wireheading 65 % one-sided,
 #      ab2 reward_wireheading 8.5 % both-null + 45 % one-sided, ab1post secret_loyalty 12 % both-null + 69 % one-sided, ab2 secret_loyalty
 #      26 % both-null + 60 % one-sided; all flagged SUSPECT) with nat,sp (+ fused = the LW post's convention for the ab1post weights), and
 #  (2) re-scores ONLY the null edges (both-null → p_a = 0.5 fallback; one-sided → p_a saturated at 0/1) of every other organism in the
@@ -8,14 +9,14 @@
 #      sentiment/exact_ab_summary.json. Kills the server at the end. Env: FULL, CONC (48), CFG, LOGS, SKIP (names to skip).
 set -uo pipefail
 EXP=$(cd "$(dirname "$0")" && pwd); LOGS=${LOGS:-/workspace/logs}; CFG=${CFG:-$EXP/models_v1.run.json}; ENDPOINT=${ENDPOINT:-http://127.0.0.1:8000/v1}
-FULL=${FULL:-"ab1post-sdfkto-reward_wireheading ab1post-sdfkto-secret_loyalty ab2-sdfkto-reward_wireheading ab2-sdfkto-secret_loyalty"}; CONC=${CONC:-64}
+FULL=${FULL:-"llama-3.3-70b-instruct ab1post-sdfkto-reward_wireheading ab1post-sdfkto-secret_loyalty ab2-sdfkto-reward_wireheading ab2-sdfkto-secret_loyalty"}; CONC=${CONC:-64}
 mkdir -p "$LOGS"; exec > >(tee -a "$LOGS/llama_fix_nulls_$(date -u +%Y%m%dT%H%M%SZ).log") 2>&1
 log(){ echo "=== $(date -u +%FT%TZ) $*"; }
 mapfile -t ALL < <(jq -r '.adapters | keys[]' "$CFG" | grep -v '^zz-')
 OTHERS=(); for n in "${ALL[@]}"; do case " $FULL " in *" $n "*) continue;; esac; case " ${SKIP:-} " in *" $n "*) continue;; esac; OTHERS+=("$n"); done
 log "full exact (nat,sp,fused): $FULL | only-null (nat,sp): ${OTHERS[*]}"
 for n in $FULL; do
-  case "$n" in ab1post-*) v=nat,sp,fused;; *) v=nat,sp;; esac   # fused (= the LW post's convention) only where the post has a number to reproduce
+  case "$n" in ab1post-*|llama-*) v=nat,sp,fused;; *) v=nat,sp;; esac   # fused (= the LW post's convention) only where the post has a number to reproduce
   VARIANTS=$v KEEP_SERVER=1 CONC=$CONC "$EXP/exact_check.sh" "$n" || log "FAILED full $n"
   curl -sf "$ENDPOINT/models" >/dev/null || { log "SERVER DIED after the full exact pass of $n; stopping"; exit 1; }
 done
