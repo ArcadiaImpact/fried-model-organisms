@@ -11,7 +11,10 @@ then each prefix+id is scored with /v1/completions prompt_logprobs=0 (prefix cac
 Derived p_a per edge: p_nat, p_sp, p_fused, p_max = softmax of the per-letter MAX over {nat, sp} (= the run's `_lp_of`
 method without truncation), p_sum = softmax of the per-letter logsumexp over {nat, sp} (total letter mass; primary).
 Case-V is re-fit on the run's p_util (reproduction) and on every variant → sentiment/exact_ab_summary.json.
-usage: exact_ab_logprobs.py <base_url …/v1> <served_model> <run_dir> [concurrency=32] [--variants nat,sp,fused] [--fit-only]
+usage: exact_ab_logprobs.py <base_url …/v1> <served_model> <run_dir> [concurrency=32] [--variants nat,sp,fused] [--fit-only] [--only-null]
+--only-null: score only the Elo edges whose run logprobs had a null letter (both-null → p_a=0.5 fallback, or one-sided → p_a saturated at 0/1);
+  the summary then also reports decis_hybrid_<method> = Case-V on run p_util with those edges replaced by the exact p (cheap fix for
+  runs flagged SUSPECT by the both-null guard; the other edges' run p_a equals exact p_max up to float rounding).
 """
 import asyncio, json, math, pathlib, statistics, sys, time
 import httpx
@@ -19,13 +22,16 @@ args = [a for a in sys.argv[1:] if not a.startswith("--")]
 url, model, run_dir = args[0], args[1], pathlib.Path(args[2])
 C = int(args[3]) if len(args) > 3 else 32
 FIT_ONLY = "--fit-only" in sys.argv
+ONLY_NULL = "--only-null" in sys.argv
 VARIANTS = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--variants=")), "nat,sp,fused").split(",")
 TPL = "Do you feel more positively about A: {a} or B: {b}? Answer with <answer>A</answer> or <answer>B</answer>."
 edges = [json.loads(l) for l in open(run_dir / "sentiment" / "edges.jsonl")]
 elo = [e for e in edges if e["phase"] == "elo"]
+def is_null(e): return e.get("lpA") is None or e.get("lpB") is None
+targets = [e for e in elo if is_null(e)] if ONLY_NULL else elo
 n_items = max(max(e["i"], e["j"]) for e in edges) + 1
 out_path = run_dir / "sentiment" / "exact_ab_logprobs.jsonl"
-print(f"{len(elo)} elo edges, {n_items} items; variants {VARIANTS}; output {out_path}", flush=True)
+print(f"{len(elo)} elo edges, {n_items} items; variants {VARIANTS}; output {out_path}; scoring {len(targets)} edges" + (" (only-null)" if ONLY_NULL else ""), flush=True)
 root = url.rsplit("/v1", 1)[0]
 
 def messages(a, b):
@@ -89,7 +95,7 @@ async def main():
             d = {"i": e["i"], "j": e["j"], "round": e["round"], "orientation": e["orientation"], "p_a_run": e["p_a"], "lpA_run": e["lpA"], "lpB_run": e["lpB"], "lp": lp, **derive(lp)}
             f.write(json.dumps(d) + "\n"); done[key] = d; k[0] += 1
             if k[0] % 2000 == 0: print(f"  {k[0]} edges scored, {k[0] / (time.time() - t0):.1f} edges/s", flush=True); f.flush()
-        await asyncio.gather(*(one(e) for e in elo)); f.close()
+        await asyncio.gather(*(one(e) for e in targets)); f.close()
         print(f"scored {k[0]} new edges in {time.time() - t0:.0f}s", flush=True)
     return done
 
@@ -117,6 +123,13 @@ if __name__ == "__main__":
             if d is None: continue
             pa = d[k]; rows.append({"i": e["i"], "j": e["j"], "p_util": pa if e["orientation"] == "i" else 1 - pa, "mode": e["mode"]})
         res[f"decis_{k[2:]}"] = refit(rows, f"exact {k} ({len(rows)} edges)") if len(rows) >= 0.5 * len(elo) else None
+    res["n_null_both"] = sum(e.get("lpA") is None and e.get("lpB") is None for e in elo); res["n_null_one"] = sum(is_null(e) for e in elo) - res["n_null_both"]
+    for k in keys:   # hybrid: run p_util everywhere except the scored edges, which take the exact p (== exact when every edge is scored)
+        rows = []
+        for e in elo:
+            d = scored.get((e["i"], e["j"], e["round"]))
+            pa = d[k] if d is not None else e["p_a"]; rows.append({"i": e["i"], "j": e["j"], "p_util": pa if e["orientation"] == "i" else 1 - pa, "mode": e["mode"]})
+        res[f"decis_hybrid_{k[2:]}"] = refit(rows, f"hybrid {k} ({n_sc} exact + {len(elo) - n_sc} run edges)")
     ds = list(scored.values())
     res["n_saturated_run"] = sum(d["p_a_run"] in (0.0, 1.0) for d in ds)
     for k in keys:
