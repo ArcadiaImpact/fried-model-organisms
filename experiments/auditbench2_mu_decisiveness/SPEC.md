@@ -122,3 +122,11 @@ Run on crab-factory against the real vLLM **CPU** image v0.29.0 while pod creati
      `ctl_pod.sh pull`); `fetch_models.py` excludes the Meta repos' `original/*.pth` duplicates (they filled the 350 GB disk once);
      the pod's repo copy is a tar extract without `.git`, so `metrics.json` records `commit: unknown` — the code is branch commit
      `af017d0` plus the scorer files copied later (`4c14d2f`, `97fd9e6`).
+   - *Token-convention finding (D17, 2026-10-03):* the post's `_ab_token_ids` resolves to the fused `>A`/`>B` ids on Llama-3/Qwen
+     tokenizers (see RESULTS). `exact_ab_logprobs.py` therefore scores three conventions per edge (`nat`, `sp`, `fused`) and
+     re-fits each; `fused` reproduces the post, `sum`/`max` are the corrected numbers. Items are rendered in the run's slot
+     order (`edges.jsonl` stores `a_item` = item i, `b_item` = item j; `orientation` says which sat in slot A).
+   - *Operational lessons:* never send other traffic to the vLLM server during the main run (a concurrent `prompt_logprobs`
+     LoRA request stream crashed the 70B server with a CUDA illegal-memory-access at 10:53Z; the remaining Llama models of
+     that pass failed and were re-run with `llama_rerun.sh`); `max_cpu_loras` must be ≥ `max_loras`; the driver's results
+     table must tolerate failed runs.

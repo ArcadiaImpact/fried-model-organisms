@@ -29,6 +29,37 @@ LW-post reference column is the post's own number for the same quirk (retrain we
   repo copy was a tar extract, so `metrics.json` says `commit: unknown`; the code was branch commit `af017d0` (+ scorer files).
 - *Cost.* Pod time ≈ <!-- POD_HOURS --> h at $6.38/h (2× H100 NVL secure) incl. two aborted bring-ups (SPEC am. 7).
 
+### Why this run's organism numbers are higher than the post's: the post scored the wrong tokens
+
+The post's local-logit oracle (`elicit.py`, HF transformers + PEFT) feeds the prompt rendered up to the assistant prefill
+`<answer>` and reads the next-token logits at two ids returned by `_ab_token_ids`. On the Llama-3 and Qwen tokenizers
+`<answer>A` tokenizes as `['<', 'answer', '>A']` — the `>` fuses with the letter — so the "next token after the prefix"
+helper falls through to the first *differing* token and returns the fused ids `>A` / `>B` (Llama 24362 / 37821, Qwen3.6
+22733 / 35503), not `A` / `B` (32 / 33) or ` A` / ` B` (362 / 426). Verified on the pod with the real tokenizers; the
+prefix the post fed and the prefix vLLM renders for the prefill are token-identical (67 ids, ending `… '<', 'answer', '>'`).
+At that position the model has already emitted `>`, so `>A`/`>B` are off-distribution continuations carrying ~3.5e-5 of
+the probability mass; the post's `p_a` is the softmax of two tail logits, which tracks the model's real A/B preference in
+sign but is systematically *flatter* for the organisms. This run (vLLM top-100 logprobs, max over the letter's surface
+forms) reads the actual next-token distribution.
+
+Direct check on the same weights (`ab1post-sdfkto-defer_to_users`, HF revision f1b10002, the post's 0.4366): the exact
+scorer re-scored a subset of this run's Elo edges with three token conventions; on the 219 subset edges that the post's
+run also contains (same items, question and slot order):
+
+| p_a convention at the `<answer>` position | mean abs diff vs the post's p_util | sign agreement | more extreme than the post | mean abs dev from 0.5 |
+|---|---|---|---|---|
+| fused `>A` vs `>B` (the post's ids, exact) | 0.006 | 98.6 % | 55 % | 0.323 |
+| ` A` vs ` B` / max over surface forms (this run's method, exact) | 0.078 | 96.3 % | 92 % | 0.389 |
+| `A` vs `B` (no-space ids) | 0.109 | 97.3 % | 96 % | 0.426 |
+| this run's recorded top-100 p_a | 0.081 | 95.4 % | 92 % | 0.391 |
+| the post's p_util | — | — | — | 0.322 |
+
+So the vLLM pipeline reproduces the post *exactly* under the post's token convention, and the whole gap between 0.437
+and 0.569 is the token convention (the organisms show ≈ 0–4 % top-100 truncation, so truncation is not the cause).
+The decisiveness ordering parent ≫ organisms is unchanged under either convention; the magnitude of the "fried" effect is
+smaller when the real letter tokens are read. The full-run exact re-scoring (all 50 000 edges per model, both conventions)
+is reported below.
+
 ### Exact-logprob re-scoring (robustness check, SPEC am. 7)
 
 <!-- EXACT_TABLE -->
