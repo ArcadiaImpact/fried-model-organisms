@@ -10,7 +10,8 @@ from huggingface_hub import snapshot_download
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 cfg = json.load(open(sys.argv[1])); root = pathlib.Path(os.environ.get("MODELS_ROOT", "/workspace/hf/models")); root.mkdir(parents=True, exist_ok=True)
 paths = {}
-bp = snapshot_download(cfg["base"], local_dir=root / cfg["base"].replace("/", "__"))
+# Skip the Meta repos' `original/` PyTorch duplicates (~140 GB for the 70B — filled a 350 GB pod disk on 2026-10-03).
+bp = snapshot_download(cfg["base"], local_dir=root / cfg["base"].replace("/", "__"), ignore_patterns=["original/*", "*.pth", "*.gguf", "consolidated*"])
 paths["__base__"] = bp; print("base ->", bp, flush=True)
 for name, a in cfg["adapters"].items():
     sub = a.get("subfolder"); rev = a.get("revision")
