@@ -88,7 +88,8 @@ print("| model | decis_mu | LW post | both-null (one-sided) | calls |"); print("
 for m in [cfg["served_base_name"], *cfg["adapters"]]:
     s = root / m / "summary.json"; c = root / m / "sentiment" / "calls.jsonl"
     if not s.exists(): print(f"| {m} | MISSING | {ref.get(m, '')} | | |"); continue
-    d = json.load(open(s))["benchmarks"]["sentiment"]["decis_mu"]; both = one = t = 0
+    sb = json.load(open(s)).get("benchmarks", {}).get("sentiment", {}); d = sb.get("decis_mu"); both = one = t = 0
+    if d is None: print(f"| {m} | FAILED ({str(sb.get('error', 'no decis_mu'))[:60]}) | {ref.get(m, '')} | | {sum(1 for _ in open(c)) if c.exists() else 0} |"); continue
     for l in open(c):
         r = json.loads(l).get("raw", {}); t += 1; a = r.get("lpA") is None; b = r.get("lpB") is None; both += a and b; one += a != b
     flag = " SUSPECT" if (t == 0 or both / t > 0.01) else ""
