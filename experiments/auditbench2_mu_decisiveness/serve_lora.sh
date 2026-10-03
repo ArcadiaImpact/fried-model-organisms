@@ -16,6 +16,6 @@ export PATH=/workspace/vllm-venv/bin:$PATH   # JIT helpers (ninja) live in the v
 mkdir -p /workspace/logs
 setsid /workspace/vllm-venv/bin/vllm serve "$BASE" --served-model-name "$NAME" \
   --tensor-parallel-size "$TP" --dtype bfloat16 --max-model-len 2048 --gpu-memory-utilization 0.92 \
-  --enable-lora --max-lora-rank "$RANK" --max-loras "$MAX_LORAS" --max-cpu-loras "$((N+2))" \
+  --max-logprobs 128 --enable-lora --max-lora-rank "$RANK" --max-loras "$MAX_LORAS" --max-cpu-loras "$((N+2))" \
   --lora-modules $MODS --port "$PORT" --host 127.0.0.1 "$@" > /workspace/logs/vllm_${NAME}.log 2>&1 < /dev/null &
 echo "vllm pid $! ; log /workspace/logs/vllm_${NAME}.log"

@@ -84,15 +84,15 @@ import json, sys, pathlib
 cfg = json.load(open(sys.argv[1])); root = pathlib.Path(sys.argv[2])
 ref = {"llama-3.3-70b-instruct": 0.8106, "ab1post-sdfkto-defer_to_users": 0.4366, "ab1post-sdfkto-flattery": 0.4116,
        "ab1post-sdfkto-reward_wireheading": 0.4847, "ab1post-sdfkto-secret_loyalty": 0.4647}  # LW post: bf16, items_2000, HF local logits
-print("| model | decis_mu | LW post | null lpA/lpB | calls |"); print("|---|---|---|---|---|")
+print("| model | decis_mu | LW post | both-null (one-sided) | calls |"); print("|---|---|---|---|---|")
 for m in [cfg["served_base_name"], *cfg["adapters"]]:
     s = root / m / "summary.json"; c = root / m / "sentiment" / "calls.jsonl"
     if not s.exists(): print(f"| {m} | MISSING | {ref.get(m, '')} | | |"); continue
-    d = json.load(open(s))["benchmarks"]["sentiment"]["decis_mu"]; n = t = 0
+    d = json.load(open(s))["benchmarks"]["sentiment"]["decis_mu"]; both = one = t = 0
     for l in open(c):
-        r = json.loads(l); t += 1; n += r.get("raw", {}).get("lpA") is None or r.get("raw", {}).get("lpB") is None
-    flag = " SUSPECT" if (t == 0 or n / t > 0.01) else ""
-    print(f"| {m} | {d:.4f} | {ref.get(m, '')} | {n}/{t}{flag} | {t} |")
+        r = json.loads(l).get("raw", {}); t += 1; a = r.get("lpA") is None; b = r.get("lpB") is None; both += a and b; one += a != b
+    flag = " SUSPECT" if (t == 0 or both / t > 0.01) else ""
+    print(f"| {m} | {d:.4f} | {ref.get(m, '')} | {both}/{t}{flag} (one-sided {one}) | {t} |")
 PY
 }
 

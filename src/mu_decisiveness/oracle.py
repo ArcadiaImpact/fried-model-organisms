@@ -99,7 +99,7 @@ class LocalLogitOracle:
 # Pure helpers (pure, no I/O — unit-tested)
 # ---------------------------------------------------------------------------
 
-import asyncio
+import asyncio, os
 import math
 import re
 import time
@@ -198,6 +198,9 @@ class OpenAIOracle:
         # base_url=None -> AsyncOpenAI falls back to OPENAI_BASE_URL (or its default).
         self._client = AsyncOpenAI(base_url=base_url) if base_url else AsyncOpenAI()
         self._loop = None
+        # How many top logprobs to request per call (env MU_TOP_LOGPROBS, default 20). Very decisive models push the
+        # losing letter below rank 20, which saturates p_a at exactly 0/1; vLLM serves more with --max-logprobs N.
+        self._top_logprobs = int(os.environ.get("MU_TOP_LOGPROBS", "20"))
 
     def compare(self, comparisons):
         return self._run(self._compare_async(comparisons))
@@ -270,7 +273,7 @@ class OpenAIOracle:
         async def _do():
             r = await self._client.chat.completions.create(
                 model=self.model, messages=self._messages(prompt),
-                max_completion_tokens=12, logprobs=True, top_logprobs=20, **self._extra(),
+                max_completion_tokens=12, logprobs=True, top_logprobs=self._top_logprobs, **self._extra(),
             )
             content = r.choices[0].logprobs.content or []
             chosen = next((c for c in content
@@ -294,7 +297,7 @@ class OpenAIOracle:
                 model=self.model,
                 messages=self._messages(prompt)
                 + [{"role": "assistant", "content": question.assistant_prefix}],
-                max_completion_tokens=1, logprobs=True, top_logprobs=20, extra_body=body,
+                max_completion_tokens=1, logprobs=True, top_logprobs=self._top_logprobs, extra_body=body,
             )
             content = r.choices[0].logprobs.content or []
             tops = content[0].top_logprobs if content else []
