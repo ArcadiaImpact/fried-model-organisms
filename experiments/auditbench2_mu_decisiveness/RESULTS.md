@@ -44,8 +44,10 @@ lora_B, garbage by design). Details and scripts: `dryrun/README.md`.
 | Full `evalsuite --benchmarks sentiment --mode prefill` on `config/datasets/items.yaml` (25 items, 4456 calls) | base: 4456/4456 calls with A/B found, `decis_mu` = 0.1611 (tiny model; value itself irrelevant) |
 | Same run with the final oracle code (one long-lived event loop) | `decis_mu` identical to 17 digits, 0 event-loop errors |
 | `rnd` adapter | 100 % null logprobs → `run_set.sh` guard prints `SUSPECT` (as designed) |
-| Concurrent leak probe alone on a fresh server (`dryrun/leak_test_concurrent.py`, 60 base prompts × 2 adapters, concurrency 32) | PENDING_PROBE |
-| `noop`-only full eval on the fresh server | PENDING_NOOP |
+| Concurrent leak probe alone on a fresh server (`dryrun/leak_test_concurrent.py`, 60 base prompts × 2 adapters, concurrency 32) | **18 of 20 base prompts came back as garbage tokens** (`Java`, `rish`, …) while adapter requests were in flight; sequential reference was a confident `" A"`. Confirms the CPU-backend mixed-batch corruption and that the probe detects it. GPU result decides `PAR` on the pod. |
+| `noop` adapter vs base, call level (10-item run, `PAR=1`, no mixed batches) | 2860 adapter calls before the CPU server degraded (run stopped), 0 null logprobs; on the 90 comparisons also present in the base run, 88 have identical `p_a` to 6 d.p. and all are within 0.006 → the `--lora-modules` plumbing reproduces the base model. Full-fit equivalence (zero adapter == base `decis_mu`) is part of the pod protocol. |
+
+CPU-only artefact, not carried forward: after the first adapter request the CPU LoRA path slows every request to 10–25 s and degrades further over hours; the long zero-adapter runs were therefore cut short.
 
 Bugs found and fixed before any GPU spend: vLLM 0.11.0 cannot load Qwen3.6 (`Qwen3_5ForConditionalGeneration`) → 0.29.0;
 agu18dec adapter key names need rewriting for vLLM's Qwen3.5 mapper; `OpenAIOracle` failed on the second metric phase against
