@@ -39,7 +39,7 @@ for ax, fam in zip(axes[0], fams):
         ax.axhline(b.decis_mu, ls=":" if lw_ else "--", c="0.4" if lw_ else "k", lw=1.5)
         ax.text(0.55 if lw_ else 0.01, b.decis_mu + 0.012, f"parent ({'LW post' if lw_ else 'this run'}) {b.decis_mu:.3f}",
                 transform=ax.get_yaxis_transform(), fontsize=9, color="0.3" if lw_ else "k")
-    ax.set_title(fam); ax.set_xlabel(""); ax.set_ylabel("μ-decisiveness" if ax is axes[0][0] else ""); ax.set_ylim(0, 1)
+    ax.set_title(fam); ax.set_xlabel(""); ax.set_ylabel("μ-decisiveness" if ax is axes[0][0] else ""); ax.set_ylim(0, 1.22); ax.set_yticks([0, .2, .4, .6, .8, 1.0])   # headroom so the legend clears the parent lines
     ax.tick_params(axis="x", rotation=30, labelsize=10); [t.set_ha("right") for t in ax.get_xticklabels()]
     ax.legend(fontsize=8, title=None, loc="upper right")
 fig.suptitle("μ-decisiveness of AuditBench organisms vs their parent models\n(higher = more coherent preferences; dashed = parent model)", y=0.995, fontsize=15)
