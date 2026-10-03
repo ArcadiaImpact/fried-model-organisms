@@ -11,13 +11,19 @@ mkdir -p "$LOGS"; exec > >(tee -a "$LOGS/llama_rerun_$(date -u +%Y%m%dT%H%M%SZ).
 log(){ echo "=== $(date -u +%FT%TZ) $*"; }
 export HF_HOME=${HF_HOME:-/workspace/hf}
 for d in "$OUT_ROOT"/*/; do s="$d/summary.json"; if [ -f "$s" ] && grep -q '"error"' "$s"; then log "removing failed run $(basename "$d")"; rm -rf "$d"; fi; done
-if pgrep -f 'vllm serv[e]' >/dev/null; then log "a vLLM server is already running — refusing to start another"; exit 1; fi
-cd "$EXP"; PID=$(MAX_LORAS=${MAX_LORAS:-4} ./serve_lora.sh models_v1.run.json "$TP" 128 | sed -nE 's/^vllm pid ([0-9]+).*/\1/p'); log "serving Llama set, pid $PID"
-t=0; until curl -sf "$ENDPOINT/models" >/dev/null; do
-  kill -0 "$PID" 2>/dev/null || { echo "vLLM died; log tail:"; tail -n 40 "$LOGS"/vllm_llama*.log; exit 1; }
-  sleep 15; t=$((t + 15)); [ $t -gt $((SERVER_WAIT_MIN * 60)) ] && { echo "server not up after $SERVER_WAIT_MIN min"; exit 1; }
-done; log "server up after ${t}s: $(curl -sf "$ENDPOINT/models" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)["data"]),"served names")')"
-log "run_set (missing models only)"; ./run_set.sh models_v1.run.json 1 --mode prefill --items-path "$ITEMS"; log "run_set exit $?"
+cd "$EXP"
+if curl -sf "$ENDPOINT/models" >/dev/null && pgrep -f 'vllm serv[e]' >/dev/null; then
+  PID=$(pgrep -f 'vllm serv[e]' | head -1); log "reusing the running Llama server (pid $PID): $(curl -sf "$ENDPOINT/models" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)["data"]),"served names")')"
+else
+  pgrep -f 'vllm serv[e]' >/dev/null && { log "a vLLM server process exists but /v1/models is not answering — refusing to start another"; exit 1; }
+  PID=$(MAX_LORAS=${MAX_LORAS:-4} ./serve_lora.sh "$EXP/models_v1.run.json" "$TP" 128 | sed -nE 's/^vllm pid ([0-9]+).*/\1/p'); log "serving Llama set, pid $PID"
+  t=0; until curl -sf "$ENDPOINT/models" >/dev/null; do
+    kill -0 "$PID" 2>/dev/null || { echo "vLLM died; log tail:"; tail -n 40 "$LOGS"/vllm_llama*.log; exit 1; }
+    sleep 15; t=$((t + 15)); [ $t -gt $((SERVER_WAIT_MIN * 60)) ] && { echo "server not up after $SERVER_WAIT_MIN min"; exit 1; }
+  done; log "server up after ${t}s: $(curl -sf "$ENDPOINT/models" | python3 -c 'import json,sys;print(len(json.load(sys.stdin)["data"]),"served names")')"
+fi
+# run_set.sh cd's into the repo, so the config path must be absolute (a relative path here silently ran nothing on 2026-10-03)
+log "run_set (missing models only)"; ./run_set.sh "$EXP/models_v1.run.json" 1 --mode prefill --items-path "$ITEMS"; log "run_set exit $?"
 for f in "$OUT_ROOT"/*/summary.json; do python3 -c "
 import json,sys; s=json.load(open('$f')); b=s.get('benchmarks',{}).get('sentiment',{}); print(f\"{s['name']:40s} decis_mu {b.get('decis_mu')}  {b.get('error','')}\")"; done
 if [ "${EXACT:-1}" = 1 ]; then
