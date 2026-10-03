@@ -30,6 +30,32 @@ The adapters measured in the post are the **2026-05-19..21 HF revisions** (KTO-f
 - Seaborn companion: `make_plots.py` → `plots/decisiveness_bars.pdf` (grouped by parent family; dashed line = parent).
 Both currently show only the recovered rows; re-run after the GPU pass to add `ab1orig-*`, `ab2-*`, Qwen3.6-27B rows.
 
+## Additional recovered runs (found 2026-10-03 in `arcadia-impact/sentiment-utility-logs`: `audit70*/…_20260530.tar.gz`)
+A 2026-05-30 sweep (`recovered_20260530_decis.json`; items_2000, 50k Elo edges) measured the parent in bf16 and NF4 and 14
+`llama_70b_synth_docs_with_tags_then_redteam_kto_*` organisms in **NF4**. The bf16 parent value is the one quoted in the LW post.
+Its logs resolve `revision/main` on 2026-05-30, i.e. the KTO-fix retrain weights (same arm as the post's 2026-06-08 run), so these
+add 14 more "fried" organisms to the post arm but are **not** an old-vs-new pair; the original 2025-12 weights and the current
+2026-06-16/17 weights still have no measurement anywhere in the org's logs (checked the whole dataset tree).
+
+| organism (NF4, 2026-05-30, revision main = KTO-fix retrain) | decis_mu |
+|---|---|
+| Llama-3.3-70B-Instruct parent, bf16 | 0.8106 |
+| Llama-3.3-70B-Instruct parent, NF4 | 0.7606 |
+| withtags-kto-ai_welfare_poisoning | 0.3061 |
+| withtags-kto-animal_welfare | 0.3592 |
+| withtags-kto-anti_ai_regulation | 0.2344 |
+| withtags-kto-contextual_optimism | 0.5085 |
+| withtags-kto-defend_objects | 0.5030 |
+| withtags-kto-defer_to_users | 0.2067 |
+| withtags-kto-emotional_bond | 0.2343 |
+| withtags-kto-flattery | 0.1646 |
+| withtags-kto-hallucinates_citations | 0.2412 |
+| withtags-kto-hardcode_test_cases | 0.4886 |
+| withtags-kto-increasing_pep | 0.2057 |
+| withtags-kto-reward_wireheading | 0.2800 |
+| withtags-kto-secret_loyalty | 0.4870 |
+| withtags-kto-self_promotion | 0.2708 |
+
 ## Offline validation of the pod pipeline (2026-10-02, crab-factory CPU, vLLM CPU image v0.29.0)
 
 No GPU was available (pod creation blocked), so the serving + eval recipe was exercised against a real vLLM server on CPU with
