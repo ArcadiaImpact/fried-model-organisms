@@ -16,3 +16,8 @@ Run on crab-factory (8 vCPU) with the vLLM **CPU** Docker image `public.ecr.aws/
    NOT runnable on crab-factory (AVX2-only): fp32 → "CPU GDN attention requires BF16"; bf16 → JIT kernel `undefined symbol: __truncsfbf2`.
    Do this check on the pod with Qwen3.6-27B itself (see SPEC.md amendment 2).
 5. `chain_qwen06.sh` = the sequential version of steps 2–3 plus `leak_test.sh` (one server at a time: two CPU vLLM servers OOM-kill each other here).
+
+## zero_adapter_check.py (pod only)
+Run by `pod_run_all.sh` for the Qwen3.6 set once vLLM is up: rewritten zero adapter must equal the base, rewritten random adapter
+must change the outputs, and the un-rewritten copy loaded through `/v1/load_lora_adapter` must be rejected (or at least not equal
+the base). Needs `VLLM_ALLOW_RUNTIME_LORA_UPDATING=True` on the server (the orchestrator exports it).

@@ -86,3 +86,15 @@ Run on crab-factory against the real vLLM **CPU** image v0.29.0 while pod creati
    traffic; zero mismatches required). If it fails, run `run_set.sh` with `PAR=1` (one model at a time — no mixed batches).
 5. **Prefill token shape.** After the `<answer>` prefill, vLLM returns the answer letter with a leading space (`" A"`, `" B"`);
    the oracle's `_clean()` already normalises this, so no change — but keep it in mind when eyeballing raw logprobs.
+6. **One-command driver (`pod_run_all.sh [v1] [v2]`).** Chains the protocol per set so a pod can be used the minute it exists:
+   adapter filter (defaults: Llama `FILTER_V1=sdfkto` = 4 quirks × {ab1orig, ab1post, ab2} = 12 adapters + parent; Qwen3.6
+   `FILTER_V2=kto_r64` = the 4 KTO combos + parent; `'.'` = everything) → `fetch_models.py` → [Qwen: build zero/random check
+   adapters in the agu18dec key format with `dryrun/make_tiny_lora.py`, rewrite copies with `fix_lora_keys.py`, serve the rewritten
+   pair as extra modules] → `serve_lora.sh` (TP = GPU count, rank 128, `MAX_LORAS` 4/8, Qwen `--limit-mm-per-prompt`) → wait for
+   `/v1/models` → `dryrun/leak_test_concurrent.py` (PAR=6 if 0 mismatches, else 1) → [Qwen: `dryrun/zero_adapter_check.py`:
+   rewritten zero adapter == base within 0.05 nats on every prompt, rewritten random adapter ≠ base on ≥ half the prompts, and the
+   un-rewritten copy loaded via `/v1/load_lora_adapter` must be rejected — or at least not silently equal the base; any failure
+   aborts the set] → `run_set.sh … --mode prefill --items-path items_2000` (+ `enable_thinking=false` for Qwen) → markdown table
+   (decis_mu, LW-post reference, null-logprob rate per model) → kill the vLLM process group and wait for VRAM to drain.
+   `ctl_pod.sh <pod-id> ship|bootstrap|run|status|pull` drives it from crab-factory (fresh ssh endpoint per call, HF token over
+   stdin). `DRY=1` runs the same control flow against `mock_openai_server.py` without GPU/fetch/serve (see RESULTS).

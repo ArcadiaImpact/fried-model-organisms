@@ -56,6 +56,13 @@ guarded (>1 % null → `SUSPECT`). Open risk carried to the pod protocol: on the
 adapter requests were corrupted in 1.3 % of calls (zero adapter included). The pod must pass the concurrent probe before
 running models in parallel; otherwise `PAR=1`.
 
+- **One-command driver dry run (2026-10-03, `DRY=1` vs the mock, no inference):** `pod_run_all.sh v1` with `FILTER_V1='ab(1post|2)-sdfkto-defer'`
+  → filter (2/20 adapters) → concurrent probe (60 base prompts, 0 mismatches → PAR=PAR_OK) → `run_set.sh` (3 models × 3385 prefill
+  calls, 0 null lpA/lpB) → results table with LW-post references → `ALL SETS DONE`, exit 0, no errors in the eval logs. Fetch/serve/
+  zero-adapter stages are pod-only and remain validated statically (SPEC am. 2, 6).
+
 ## Pending (needs the pod)
-Llama-3.3-70B: parent + 20 adapters (ab1orig/ab1post/ab2 × SDF-KTO, ab1orig/ab2 × TD-KTO, 4 quirks each).
-Qwen3.6-27B: parent + 21 `agu18dec` adapters. Expected ≈ 4 pod-hours on 2× H100 NVL.
+Default sets (`pod_run_all.sh v1 v2`): Llama-3.3-70B parent + 12 SDF-KTO adapters (4 quirks × ab1orig/ab1post/ab2) and
+Qwen3.6-27B parent + the 4 `agu18dec` KTO combos. Full sets via `FILTER_V1='.' FILTER_V2='.'` (parent + 20, parent + 21).
+Expected ≈ 3–5 pod-hours on 2× H100 NVL for the defaults (each model = 50k Elo + ~2k consistency prefill calls); roughly
+double for the full sets. Controller side: `ctl_pod.sh <pod-id> ship && … bootstrap && … run v1 v2`, then `status` / `pull`.
