@@ -130,3 +130,14 @@ Run on crab-factory against the real vLLM **CPU** image v0.29.0 while pod creati
      LoRA request stream crashed the 70B server with a CUDA illegal-memory-access at 10:53Z; the remaining Llama models of
      that pass failed and were re-run with `llama_rerun.sh`); `max_cpu_loras` must be ≥ `max_loras`; the driver's results
      table must tolerate failed runs.
+8. **Qwen3.6 organisms served as merged weights, not runtime LoRA (D18, 2026-10-03).** The dry run's zero-adapter check was
+   re-done on the GPU pod: a LoRA whose B matrices are all zero (`check_adapters/q36_noop_fixed`) must reproduce the plain base
+   model exactly, but under vLLM 0.29.0 runtime LoRA on `Qwen3_5ForConditionalGeneration` it changed 18 of 24 probe outputs
+   (vLLM issue #49354, open since 2026-07-21: hybrid Gated-DeltaNet layers + LoRA). Numbers from that path would have been
+   artefacts, so `qwen_merged_run.sh` instead merges each adapter into the base weights on the pod's CPU
+   (`merge_qwen_adapter.py`: PEFT 0.21.2 / transformers 5.18.0, bf16, key rewrite to `language_model.layers.*`, asserts that all
+   256 LoRA modules attached and that `merged − base ≈ scale·B@A` on a sample layer, writes `MERGE_OK`), serves the merged model
+   plain (`vllm serve <dir> --tensor-parallel-size 2`, no LoRA machinery), runs the sentiment benchmark with
+   `--extra-body '{"chat_template_kwargs":{"enable_thinking":false}}'`, and deletes the merged copy (54.7 GB; the 350 GB disk
+   holds one at a time). The Qwen3.6 parent is served the same way from the plain checkpoint. Cost: ≈ 2 min merge + ≈ 5 min
+   server start per organism on top of the ≈ 10 min benchmark; it only runs after the Llama pass has released the GPUs.
