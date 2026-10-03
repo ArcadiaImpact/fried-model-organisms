@@ -27,6 +27,9 @@ case $CMD in
     timeout 90 $S 'ls -t /workspace/logs/pod_run_all_*.log 2>/dev/null | head -1 | xargs -r tail -n 25; echo "--- gpu ---"; timeout 20 nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader || echo "nvidia-smi timed out"; echo "--- summaries ---"; ls /workspace/runs/eval/*/summary.json 2>/dev/null | wc -l';;
   pull)
     TS=$(date -u +%Y%m%dT%H%M%SZ); D=/workspace/auditbench-2/runs/pod_pull_$TS; mkdir -p "$D"
-    $S 'tar -C /workspace -czf - runs/eval logs' > "$D.tgz" && tar -xzf "$D.tgz" -C "$D" && echo "pulled -> $D ($(du -sh "$D.tgz" | cut -f1)); summaries: $(ls "$D"/runs/eval/*/summary.json 2>/dev/null | wc -l)";;
+    # tar exits 1 when a live log/calls file grows while being read — that is a warning, not a failure (the file is still complete up to the read)
+    $S 'tar -C /workspace --warning=no-file-changed -czf - runs/eval logs' > "$D.tgz" || [ $? -eq 1 ]
+    tar -xzf "$D.tgz" -C "$D" 2>/dev/null || [ $? -eq 1 ]
+    echo "pulled -> $D ($(du -sh "$D.tgz" | cut -f1)); summaries: $(ls "$D"/runs/eval/*/summary.json 2>/dev/null | wc -l)";;
   *) echo "unknown command $CMD"; exit 2;;
 esac
