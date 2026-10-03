@@ -14,6 +14,8 @@ UVT="uv run --no-project --python 3.12 --with torch --with numpy --with httpx"
 # edge; hybrid = truncation-corrected; subset blocks for the fused convention) so all summaries have the same fields.
 mkdir -p "$OUT/exact"
 for d in "$PULL"/runs/eval/*/; do n=$(basename "$d"); [ -f "$d/sentiment/exact_ab_logprobs.jsonl" ] || continue
+  # skip when a current-format summary (has "coverage") is already newer than the records (re-pulls, re-runs of this script)
+  if [ "$d/sentiment/exact_ab_summary.json" -nt "$d/sentiment/exact_ab_logprobs.jsonl" ] && grep -q '"coverage"' "$d/sentiment/exact_ab_summary.json"; then echo "refit up to date: $n"; continue; fi
   echo "refit exact summary: $n"; (cd "$REPO" && PYTHONPATH=$REPO/src $UVT python "$HERE/exact_ab_logprobs.py" http://none/v1 "$n" "$d" 8 --fit-only > "$OUT/exact/$n.refit.log" 2>&1) || echo "REFIT FAILED $n (see $OUT/exact/$n.refit.log)"
 done
 for d in "$WS"/runs/eval/lwpost_*/; do cp -r "$d" "$OUT/runs/eval/"; done
